@@ -8,7 +8,7 @@
 
 Windows x64 · SteamVR · Android · USB / 无线连接
 
-**[网站下载](https://hoshinochika.com/) · [使用方法](#开始使用) · [反馈问题](https://github.com/HoshinoChika/VRPhoneScreenOverlay/issues)**
+**[下载 Windows 版](https://github.com/HoshinoChika/VRPhoneScreenOverlay/releases/latest) · [网站下载](https://hoshinochika.com/) · [使用方法](#开始使用)**
 
 当前版本 **0.2.7** · 解压即用
 
@@ -27,6 +27,7 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 | 调整画面 | 设置分辨率、码率和帧率，适应电脑性能和网络情况。 |
 | 空间拖拽 | 可选功能，提供惯性、重力等设置。 |
 | 手柄绑定 | 按手柄显示操作说明，可修改 SteamVR 绑定；保存后实时应用。 |
+| PICO 麦克风 | 可选开启麦克风延迟改善功能。 |
 
 <table>
 <tr>
@@ -39,11 +40,9 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 
 ## 下载
 
-**[打开 HoshinoChika 网站](https://hoshinochika.com/)，点击右上角“下载”。** 服务器会返回当前版本的 115 直链，无需登录 115。
+**[GitHub 下载](https://github.com/HoshinoChika/VRPhoneScreenOverlay/releases/latest)**，或[打开 HoshinoChika 网站](https://hoshinochika.com/)，点击右上角“下载”。
 
 下载的是完整 Windows x64 ZIP。解压后运行 `VRPhoneScreenOverlay.exe`，保留同目录的 `app` 文件夹。
-
-[GitHub Releases](https://github.com/HoshinoChika/VRPhoneScreenOverlay/releases) 是另一下载入口，安装包上架后可在这里下载。当前仓库仍为私有，需要仓库权限才能访问。
 
 ## 开始使用
 
@@ -66,17 +65,20 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 
 手机无声时，检查系统版本、音频输出和应用是否允许录音。不能操作时，检查手机的调试和输入权限。SteamVR 超时时，检查运行状态和权限。
 
-仍有问题可在软件“关于”页填写现象并上传诊断，或到 [Issues](https://github.com/HoshinoChika/VRPhoneScreenOverlay/issues) 反馈。请说明版本、设备和复现步骤。诊断不包含手机画面、音频或原始绑定文件。
+仍有问题可在软件“关于”页填写现象并上传诊断，或到 [Issues](https://github.com/HoshinoChika/VRPhoneScreenOverlay/issues) 反馈。请说明版本、设备和复现步骤。
 
-<details>
-<summary>0.2.7 更新内容</summary>
+## 参考项目与致谢
 
-- 修改并保存手柄绑定后，运行中的浮窗同步应用新绑定。
-- 功能说明刷新时保留现有内容，减少闪烁。
-- SteamVR 连接超时后显示明确提示。
-- 改善 SteamVR 手柄绑定页的打开方式。
-- 自动更新和手动下载使用同一个全量包。
+感谢以下项目和作者提供的代码、思路与资料：
 
-</details>
+| 项目 / 作者 | 本项目的使用或参考 |
+| :--- | :--- |
+| [scrcpy](https://github.com/Genymobile/scrcpy) · Genymobile、Romain Vimont | 手机画面、音频和控制功能的基础。 |
+| [OVR Advanced Settings](https://github.com/OpenVR-Advanced-Settings/OpenVR-AdvancedSettings) · Advanced Settings 团队 | 空间拖拽、惯性、重力及手柄绑定的参考。 |
+| [PicoStreamingMicrophoneKeeper](https://github.com/Kill11/PicoStreamingMicrophoneKeeper) · Kill11 | PICO 麦克风延迟改善功能的参考。 |
+| [PICO 麦克风延迟分析](https://gist.github.com/fz6m/337aa44c27a7bde449ccff0e352f3040) · fz6m | PICO 麦克风问题的分析与处理思路。 |
+| [OpenVR](https://github.com/ValveSoftware/openvr) · Valve | SteamVR 浮窗和手柄接口。 |
 
-项目采用 GPL-3.0。第三方组件遵循各自许可证，安装包内附有说明。源码和构建文档整理后会补齐到本仓库。
+[完整第三方说明](THIRD_PARTY.md) · [构建说明](docs/BUILDING.md)
+
+项目采用 [GPL-3.0](LICENSE)，第三方组件遵循各自许可证。

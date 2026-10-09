@@ -1,0 +1,18 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.sln text eol=crlf
+*.png binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.pdb binary
+
+# Files whose SHA256 is recorded in a resource manifest and checked by tools/Verify.ps1.
+# They must check out byte for byte on every machine, so git must never rewrite their
+# line endings. Normalising one of these silently invalidates its recorded hash.
+src/VRPhoneScreenOverlay.SteamVR/Resources/OpenVR/LICENSE-VALVE -text
+src/VRPhoneScreenOverlay.SteamVR/Resources/OpenVR/Vortice-LICENSE -text
+src/VRPhoneScreenOverlay.Android/Resources/Scrcpy/THIRD_PARTY_NOTICE.txt -text
+src/VRPhoneScreenOverlay.Android/Resources/AndroidPlatformTools/THIRD_PARTY_NOTICE.txt -text

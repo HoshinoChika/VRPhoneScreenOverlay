@@ -1,0 +1,11 @@
+{
+  "component": "Android SDK Platform-Tools",
+  "tool": "Android Debug Bridge",
+  "version": "37.0.0-14910828",
+  "sourcePackage": "SpaceDrag Lite verified scrcpy bundle",
+  "files": {
+    "adb.exe": "957e46b8615f7af5b7292a2ddabe98d2e61940c3fb2b0545756507f080613e71",
+    "AdbWinApi.dll": "120bef587119c6cb926b86b9be90fdfbce38937588eae28cd91a94ce63c7b965",
+    "AdbWinUsbApi.dll": "6ca69a2ca0e31309c087d288f058977d421ad03500e4c3e1dbd981241a069c60"
+  }
+}

@@ -1,0 +1,187 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0-windows10.0.19041": {
+      "NAudio.Asio": {
+        "type": "Transitive",
+        "resolved": "3.0.0",
+        "contentHash": "JUdHfdJk7+xIuzBfcvE7gnAEBNbXDui0Ay7Zy4vt29UPP3319bkLYRoIR5W+bRFDn8aVdHnPMYDJANRAHx2AMg==",
+        "dependencies": {
+          "NAudio.Core": "3.0.0"
+        }
+      },
+      "NAudio.Core": {
+        "type": "Transitive",
+        "resolved": "3.0.0",
+        "contentHash": "uEX5xkjbUQ3w8XVuqcX1iMRr0avhOdn2WFiPL2X/kF72anSJSgdLhpkxCxr6N1hQr+hWx1L5lNJJeg0sh6xBiw==",
+        "dependencies": {
+          "System.Numerics.Tensors": "9.0.0"
+        }
+      },
+      "NAudio.Dmo": {
+        "type": "Transitive",
+        "resolved": "3.0.0",
+        "contentHash": "4HfNHTcxe/2wIqFsgfUAHUQk3Gm7jIUap47nwP3Ro1dFh2QRWhroxDV3O4+oeHpqOuK5eFszbrxjo5yayS8W5w==",
+        "dependencies": {
+          "NAudio.Core": "3.0.0"
+        }
+      },
+      "NAudio.Midi": {
+        "type": "Transitive",
+        "resolved": "3.0.0",
+        "contentHash": "h3VjMTBoBAOw63W7mMrv1kHdRQZkuayTpYrUsusUolORkmgfFiMg8eM4VHwgMBcOgm14997B/r7EojavMBu6CQ==",
+        "dependencies": {
+          "NAudio.Core": "3.0.0"
+        }
+      },
+      "NAudio.Wasapi": {
+        "type": "Transitive",
+        "resolved": "3.0.0",
+        "contentHash": "bYkBTvc9U0gCfi1p0hyNnoYeE2w2qH7U58zb9LecMhboTarw4xOKLnEfHV9XaSrnFS28SC1iG2z/lJuBMRpK/A==",
+        "dependencies": {
+          "NAudio.Core": "3.0.0"
+        }
+      },
+      "NAudio.WinForms": {
+        "type": "Transitive",
+        "resolved": "3.0.0",
+        "contentHash": "JhDTk3vW2LZY0qE7eF779rmMp2sWcsAoQCo712MorNRroRfafG6xtU/BBDSaThE31XIaQxfTB7FA3lWwd+AyDQ==",
+        "dependencies": {
+          "NAudio.WinMM": "3.0.0"
+        }
+      },
+      "NAudio.WinMM": {
+        "type": "Transitive",
+        "resolved": "3.0.0",
+        "contentHash": "RfBlBk0KPNQx3OUcZtxbqhaz0sKMVTcntBtIHZYfePMA7CjawePHR4xpH+lKoVnWxppPxoAk0Bf8k1fE30RuAQ==",
+        "dependencies": {
+          "NAudio.Core": "3.0.0",
+          "NAudio.Midi": "3.0.0"
+        }
+      },
+      "SharpGen.Runtime": {
+        "type": "Transitive",
+        "resolved": "2.4.2-beta",
+        "contentHash": "niTtWAUov1F7wZGAlVeEvW+Tnqvg5yTmhI7rxmYu2Utoyu2TbC9tWWpUpMs0PQg5lu5svoYpCAztNjxCqMFP/w=="
+      },
+      "SharpGen.Runtime.COM": {
+        "type": "Transitive",
+        "resolved": "2.4.2-beta",
+        "contentHash": "9lxDFMiepqo3lJQzMSjECCIONeCc2f3Drokgj6HtrTLZcJSftNgcLbD6/iXYj2iphkwgrZb1oLsDOZxoFZkawQ==",
+        "dependencies": {
+          "SharpGen.Runtime": "2.4.2-beta"
+        }
+      },
+      "System.Numerics.Tensors": {
+        "type": "Transitive",
+        "resolved": "9.0.0",
+        "contentHash": "hyJB4UlpAi19Xr9AXzu2NuagKC4lPfHObNMEAA0HmqFz2rX7wKgzeYzO/jM/eBHDhnUGFFEjk5cOoJaxqg5J4A=="
+      },
+      "Vortice.DirectX": {
+        "type": "Transitive",
+        "resolved": "3.8.3",
+        "contentHash": "nKwSavv0w5rDF7prSefqAVPDcTyqrfZxKFMVfttiXPfm62VdA/1d+b3PhCZpW4xO7jXczXDwjQdWgD1zGsvM8w==",
+        "dependencies": {
+          "SharpGen.Runtime": "2.4.2-beta",
+          "SharpGen.Runtime.COM": "2.4.2-beta",
+          "Vortice.Mathematics": "2.1.0"
+        }
+      },
+      "Vortice.DXGI": {
+        "type": "Transitive",
+        "resolved": "3.8.3",
+        "contentHash": "MbAUnTeQ6WD99ctAdrj5CQO2I7oaax0Kt2eVdWSUj0bYP9Ed0726+s7dIHe4+tqhpmINW/dcPt0mNtc72o+E0w==",
+        "dependencies": {
+          "SharpGen.Runtime": "2.4.2-beta",
+          "Vortice.DirectX": "3.8.3"
+        }
+      },
+      "Vortice.Mathematics": {
+        "type": "Transitive",
+        "resolved": "2.1.0",
+        "contentHash": "KK+SjNSuKdP+zbavekubi+vaeb1Jo4k87ZF6CMkVWjr6RjJwc8peVtmgzXXDIMy4ZC3ZISyk3llY3q65ISOkBQ=="
+      },
+      "vrphonescreenoverlay.android": {
+        "type": "Project",
+        "dependencies": {
+          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )"
+        }
+      },
+      "vrphonescreenoverlay.contracts": {
+        "type": "Project"
+      },
+      "vrphonescreenoverlay.input": {
+        "type": "Project",
+        "dependencies": {
+          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )"
+        }
+      },
+      "vrphonescreenoverlay.media": {
+        "type": "Project",
+        "dependencies": {
+          "Concentus": "[2.2.2, )",
+          "NAudio": "[3.0.0, )",
+          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
+          "Vortice.MediaFoundation": "[3.8.3, )"
+        }
+      },
+      "vrphonescreenoverlay.presentation": {
+        "type": "Project"
+      },
+      "vrphonescreenoverlay.settings": {
+        "type": "Project"
+      },
+      "vrphonescreenoverlay.steamvr": {
+        "type": "Project",
+        "dependencies": {
+          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
+          "VRPhoneScreenOverlay.Media": "[0.2.7, )",
+          "VRPhoneScreenOverlay.Presentation": "[0.2.7, )",
+          "Vortice.Direct3D11": "[3.8.3, )"
+        }
+      },
+      "Concentus": {
+        "type": "CentralTransitive",
+        "requested": "[2.2.2, )",
+        "resolved": "2.2.2",
+        "contentHash": "2B9YmHPKO+k7YpAAnqmiXwiMJnfjfj1C868RszOll2iZWLnGTAiC1q21L/d7CvTan7T+hyqU8dR0Dcy3cpjVfQ=="
+      },
+      "NAudio": {
+        "type": "CentralTransitive",
+        "requested": "[3.0.0, )",
+        "resolved": "3.0.0",
+        "contentHash": "ZPB4QJyVpMXOBpzwASEjiqVKbtTM+81eex7VMNOP31P0f3kqNhJL3v/C7DooVcta5PkSxtx4NH8l/UGUKawW1g==",
+        "dependencies": {
+          "NAudio.Asio": "3.0.0",
+          "NAudio.Core": "3.0.0",
+          "NAudio.Dmo": "3.0.0",
+          "NAudio.Midi": "3.0.0",
+          "NAudio.Wasapi": "3.0.0",
+          "NAudio.WinForms": "3.0.0",
+          "NAudio.WinMM": "3.0.0"
+        }
+      },
+      "Vortice.Direct3D11": {
+        "type": "CentralTransitive",
+        "requested": "[3.8.3, )",
+        "resolved": "3.8.3",
+        "contentHash": "JgFUswu2mgrSwcd0KRF2AnfeE5VbMEgcicmxPD1g2yXyomPIHbnX3wldBNHPOzzD0URC1WJ/pO1ymfi3imZwvg==",
+        "dependencies": {
+          "SharpGen.Runtime": "2.4.2-beta",
+          "Vortice.DXGI": "3.8.3"
+        }
+      },
+      "Vortice.MediaFoundation": {
+        "type": "CentralTransitive",
+        "requested": "[3.8.3, )",
+        "resolved": "3.8.3",
+        "contentHash": "TeAN7tKrf1XfUxXe1+fukRvPCTW53DQUxuPR0pZLivuhmLlFCgpvb+EQWfCKENnEwbJnL+OdrHxWn2qUZiYMuA==",
+        "dependencies": {
+          "SharpGen.Runtime": "2.4.2-beta",
+          "Vortice.DirectX": "3.8.3"
+        }
+      }
+    },
+    "net10.0-windows10.0.19041/win-x64": {}
+  }
+}

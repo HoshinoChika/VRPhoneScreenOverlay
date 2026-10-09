@@ -1,0 +1,201 @@
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
+index 777873b..2c332cc 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
+@@ -32,0 +33,3 @@ public final class ControlMessage {
++    // VRPhoneScreen Overlay extension: refresh Android user activity without injecting a visible input event.
++    public static final int TYPE_USER_ACTIVITY = 127;
++    public static final int TYPE_GUARDED_WAKE = 128;
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
+index b2591d6..325ec95 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
+@@ -51,0 +52,2 @@ public class ControlMessageReader {
++            case ControlMessage.TYPE_GUARDED_WAKE:
++            case ControlMessage.TYPE_USER_ACTIVITY:
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
+index 55d6e11..28889cf 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
+@@ -391,0 +392,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
++                case ControlMessage.TYPE_GUARDED_WAKE:
++                    if (supportsInputEvents) {
++                        guardedWake();
++                    }
++                    return true;
++                case ControlMessage.TYPE_USER_ACTIVITY:
++                    int userActivityDisplayId = getActionDisplayId();
++                    if (userActivityDisplayId != Device.DISPLAY_ID_NONE) {
++                        Device.keepActive(userActivityDisplayId);
++                    }
++                    return true;
+@@ -450,0 +462,31 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
++    private void guardedWake() {
++        int targetDisplayId = getActionDisplayId();
++        if (targetDisplayId == Device.DISPLAY_ID_NONE) {
++            return;
++        }
++        GuardedWake.apply(new GuardedWake.DeviceAccess() {
++            @Override
++            public boolean isInteractive() {
++                // PowerManager interaction state, not the physical panel power mode.
++                return Device.isScreenOn(targetDisplayId);
++            }
++
++            @Override
++            public void wakeUp() {
++                // Bypass injectKeycode(): it schedules an unconditional delayed off
++                // which could fire after the user has already disabled screen guard.
++                Device.pressReleaseKeycode(KeyEvent.KEYCODE_WAKEUP, targetDisplayId, Device.INJECT_MODE_ASYNC);
++            }
++
++            @Override
++            public void keepActive() {
++                Device.keepActive(targetDisplayId);
++            }
++
++            @Override
++            public void keepDisplayOff() {
++                Controller.this.setDisplayPower(false);
++            }
++        });
++    }
++
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/GuardedWake.java b/server/src/main/java/com/genymobile/scrcpy/control/GuardedWake.java
+new file mode 100644
+index 0000000..7023ea9
+--- /dev/null
++++ b/server/src/main/java/com/genymobile/scrcpy/control/GuardedWake.java
+@@ -0,0 +1,26 @@
++package com.genymobile.scrcpy.control;
++
++// Runs only for an explicit VR wake request on the existing control thread.
++// No timer, thread, queue or unconditional physical-panel-on request is added.
++final class GuardedWake {
++    interface DeviceAccess {
++        boolean isInteractive();
++        void wakeUp();
++        void keepActive();
++        void keepDisplayOff();
++    }
++
++    private GuardedWake() {
++    }
++
++    static void apply(DeviceAccess device) {
++        try {
++            if (!device.isInteractive()) {
++                device.wakeUp();
++            }
++            device.keepActive();
++        } finally {
++            device.keepDisplayOff();
++        }
++    }
++}
+diff --git a/server/src/test/java/com/genymobile/scrcpy/control/ControlMessageReaderTest.java b/server/src/test/java/com/genymobile/scrcpy/control/ControlMessageReaderTest.java
+index b3d18bf..01d072b 100644
+--- a/server/src/test/java/com/genymobile/scrcpy/control/ControlMessageReaderTest.java
++++ b/server/src/test/java/com/genymobile/scrcpy/control/ControlMessageReaderTest.java
+@@ -178,0 +179,19 @@ public class ControlMessageReaderTest {
++        Assert.assertEquals(-1, bis.read()); // EOS
++    }
++
++    @Test
++    public void testParseGuardedWakeEvent() throws IOException {
++        ByteArrayInputStream bis = new ByteArrayInputStream(new byte[]{(byte) ControlMessage.TYPE_GUARDED_WAKE});
++        ControlMessage event = new ControlMessageReader(bis).read();
++        Assert.assertEquals(128, event.getType());
++        Assert.assertEquals(-1, bis.read());
++    }
++
++    @Test
++    public void testParseUserActivityEvent() throws IOException {
++        ByteArrayInputStream bis = new ByteArrayInputStream(new byte[]{ControlMessage.TYPE_USER_ACTIVITY});
++        ControlMessageReader reader = new ControlMessageReader(bis);
++
++        ControlMessage event = reader.read();
++        Assert.assertEquals(ControlMessage.TYPE_USER_ACTIVITY, event.getType());
++
+diff --git a/server/src/test/java/com/genymobile/scrcpy/control/GuardedWakeTest.java b/server/src/test/java/com/genymobile/scrcpy/control/GuardedWakeTest.java
+new file mode 100644
+index 0000000..3a8fe2f
+--- /dev/null
++++ b/server/src/test/java/com/genymobile/scrcpy/control/GuardedWakeTest.java
+@@ -0,0 +1,76 @@
++package com.genymobile.scrcpy.control;
++
++import org.junit.Assert;
++import org.junit.Test;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++
++public class GuardedWakeTest {
++    @Test
++    public void interactiveDeviceWithPanelOffNeverWakesOrLightsAcrossRepeatedGrabs() {
++        FakeDevice device = new FakeDevice(true);
++        for (int grab = 0; grab < 4; ++grab) {
++            device.events.clear();
++            GuardedWake.apply(device);
++            Assert.assertEquals(Arrays.asList("activity", "off"), device.events);
++            Assert.assertFalse(device.panelOn);
++        }
++    }
++
++    @Test
++    public void sleepingDeviceStillReceivesWakeAndReturnsToPanelOff() {
++        FakeDevice device = new FakeDevice(false);
++        GuardedWake.apply(device);
++        Assert.assertEquals(Arrays.asList("wake", "activity", "off"), device.events);
++        Assert.assertTrue(device.interactive);
++        Assert.assertFalse(device.panelOn);
++    }
++
++    @Test
++    public void unexpectedProbeFailureStillReassertsPanelOff() {
++        FakeDevice device = new FakeDevice(true) {
++            @Override
++            public boolean isInteractive() {
++                throw new IllegalStateException("probe failed");
++            }
++        };
++        Assert.assertThrows(IllegalStateException.class, () -> GuardedWake.apply(device));
++        Assert.assertEquals(Arrays.asList("off"), device.events);
++        Assert.assertFalse(device.panelOn);
++    }
++
++    private static class FakeDevice implements GuardedWake.DeviceAccess {
++        private boolean interactive;
++        private boolean panelOn;
++        private final List<String> events = new ArrayList<>();
++
++        FakeDevice(boolean awake) {
++            interactive = awake;
++        }
++
++        @Override
++        public boolean isInteractive() {
++            return interactive;
++        }
++
++        @Override
++        public void wakeUp() {
++            events.add("wake");
++            interactive = true;
++            panelOn = true;
++        }
++
++        @Override
++        public void keepActive() {
++            events.add("activity");
++        }
++
++        @Override
++        public void keepDisplayOff() {
++            events.add("off");
++            panelOn = false;
++        }
++    }
++}

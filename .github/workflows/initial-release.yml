@@ -1,0 +1,60 @@
+name: Publish Windows release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/initial-release.yml
+      - docs/RELEASE_NOTES.md
+      - VERSION
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Download the verified Windows package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          if gh release view "v$version" --json assets --jq '.assets[].name' | grep -q "VRPhoneScreenOverlay-$version-win-x64.zip"; then
+            echo "Release package already exists."
+            exit 0
+          fi
+          python3 - <<'PY'
+          import hashlib, pathlib, re, urllib.request
+          version = pathlib.Path('VERSION').read_text().strip()
+          if version != '0.2.7':
+              raise RuntimeError('Prepare a verified package before publishing another version')
+          readme = pathlib.Path('README.md').read_text()
+          origin = re.search(r'\[网站下载\]\((https://[^)]+/)\)', readme).group(1)
+          target = pathlib.Path(f'VRPhoneScreenOverlay-{version}-win-x64.zip')
+          request = urllib.request.Request(origin.rstrip('/') + '/vrphonescreen/api/v1/updates/download/' + version,
+              headers={'User-Agent':'VRPhoneScreenOverlay/update-client'})
+          with urllib.request.urlopen(request, timeout=30) as response, target.open('wb') as output:
+              while chunk := response.read(1024 * 1024):
+                  output.write(chunk)
+          digest = hashlib.sha256(target.read_bytes()).hexdigest()
+          if digest != 'f24bfac39a300297e56afc66c72467fba62b05df2456195ee77ab3664be3409a':
+              raise RuntimeError('Published package hash differs from the verified release')
+          pathlib.Path('SHA256SUMS.txt').write_text(digest + '  ' + target.name + '\n')
+          PY
+          if [ -f "VRPhoneScreenOverlay-$version-win-x64.zip" ]; then
+            gh release create "v$version" "VRPhoneScreenOverlay-$version-win-x64.zip" SHA256SUMS.txt \
+              --target "$GITHUB_SHA" --title "$version" --notes-file docs/RELEASE_NOTES.md --latest
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v$version" \
+            --jq '{version: .tag_name, url: .html_url, draft: .draft, assets: [.assets[] | {name: .name, bytes: .size, digest: .digest}]}' > release-status.json
+          content="$(base64 -w0 release-status.json)"
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/.github/release-status.json" \
+            -f message="Record release $version" -f content="$content"

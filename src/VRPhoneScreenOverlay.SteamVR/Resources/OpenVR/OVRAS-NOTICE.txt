@@ -1,0 +1,15 @@
+OVR Advanced Settings motion implementation attribution
+Copyright OVR Advanced Settings contributors.
+Source: https://github.com/OpenVR-Advanced-Settings/OpenVR-AdvancedSettings
+Revision: 31df8b476b4cee7c29695bae993839ef48ec7ea1 (5.8.17)
+License: GNU General Public License version 3; see OVRAS-LICENSE.txt.
+
+OpenVrPlayspaceMotion.cs and the release velocity calculation in
+OpenVrPlayspaceDragController.cs adapt updateHandDrag/updateGravity/clampVelocity
+from src/tabcontrollers/MoveCenterTabController.cpp to C#.
+Modified by VRPhoneScreen Overlay contributors, 2026-10-04.
+Preserved: drag-derived velocity, fling strength, time-scaled friction,
+per-axis 50 m/s terminal velocity, Euler gravity, zero-offset floor touchdown.
+Differences: bounded timing, tracking/input interruption cancellation, no saved
+momentum/reverse gravity, fresh-origin full reset and optional planar reset.
+The application retains its existing input actions and does not import bindings.

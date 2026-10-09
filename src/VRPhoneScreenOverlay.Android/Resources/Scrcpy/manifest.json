@@ -1,0 +1,16 @@
+{
+  "component": "scrcpy server",
+  "version": "4.1",
+  "upstreamCommit": "2926c06c5dc3064ae6d8db706f1a98a37cfcf3f0",
+  "source": "https://github.com/Genymobile/scrcpy/releases/tag/v4.1",
+  "customization": {
+    "patch": "third_party/scrcpy/vrphonescreen-user-activity.patch",
+    "controlMessageType": 127,
+    "purpose": "Stateless user activity and device-side guarded wake without unconditional panel-on",
+    "guardedWakeControlMessageType": 128,
+    "patchSha256": "bf45c531d9e1015161d27fb5cfcdd75add8eb36a8c65b90f3ff27d7080dbb3fe"
+  },
+  "files": {
+    "scrcpy-server-v4.1": "498911c707b4a21a6b7b163833b222b2d4bd58dc96f692da1dc3a6db4cd30177"
+  }
+}

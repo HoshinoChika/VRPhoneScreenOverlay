@@ -1,0 +1,12 @@
+{
+  "sdk": {
+    "version": "10.0.400",
+    "rollForward": "latestPatch",
+    "allowPrerelease": false,
+    "paths": [
+      ".dotnet",
+      "$host$"
+    ],
+    "errorMessage": "VRPhoneScreen Overlay requires the .NET 10 SDK. Run tools/Install-DevelopmentSdk.ps1."
+  }
+}

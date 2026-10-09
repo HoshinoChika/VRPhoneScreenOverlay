@@ -1,0 +1,44 @@
+{
+  "action_manifest_version": 0,
+  "app_key": "local.spacedraglite.desktop.v1",
+  "controller_type": "vive_controller",
+  "name": "VRPhoneScreen Overlay - Vive Wand Default",
+  "description": "PICO-style layout adapted for Vive Wand controllers",
+  "bindings": { "/actions/main": {
+    "poses": [
+      { "output": "/actions/main/in/phonepointerpose", "path": "/user/hand/right/pose/tip" }
+    ],
+    "sources": [
+      { "path": "/user/hand/left/input/application_menu", "mode": "button", "inputs": {
+        "click": { "output": "/actions/main/in/lefthandspacedrag" }
+      } },
+      { "path": "/user/hand/left/input/trackpad", "mode": "button", "inputs": {
+        "click": { "output": "/actions/main/in/resetoffsets" }
+      } },
+      { "path": "/user/hand/right/input/application_menu", "mode": "button", "inputs": {
+        "click": { "output": "/actions/main/in/phoneback" },
+        "long": { "output": "/actions/main/in/phonehome" }
+      }, "parameters": { "long_press_delay": 0.65, "long_press_expiry": 3 } },
+      { "path": "/user/hand/right/input/trackpad", "mode": "button", "inputs": {
+        "click": { "output": "/actions/main/in/phonerecents" },
+        "double": { "output": "/actions/main/in/phonescreenshot" },
+        "long": { "output": "/actions/main/in/phonecontrolpanel" }
+      }, "parameters": {
+        "double_press_delay": 0.3,
+        "long_press_delay": 0.65,
+        "long_press_expiry": 3
+      } },
+      { "path": "/user/hand/right/input/trackpad", "mode": "trackpad", "inputs": {
+        "position": { "output": "/actions/main/in/phoneoverlayscale" }
+      } },
+      { "path": "/user/hand/right/input/trigger", "mode": "trigger", "inputs": {
+        "click": { "output": "/actions/main/in/phoneoverlaytouch" }
+      } },
+      { "path": "/user/hand/right/input/grip", "mode": "button", "inputs": {
+        "click": { "output": "/actions/main/in/phoneoverlaygrab" }
+      } }
+    ]
+  } },
+  "options": {},
+  "simulated_actions": []
+}

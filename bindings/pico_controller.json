@@ -1,0 +1,110 @@
+{
+  "action_manifest_version": 0,
+  "alias_info": {},
+  "app_key": "local.spacedraglite.desktop.v1",
+  "bindings": {
+    "/actions/main": {
+      "poses": [
+        {
+          "output": "/actions/main/in/phonepointerpose",
+          "path": "/user/hand/right/pose/tip"
+        }
+      ],
+      "skeleton": [],
+      "sources": [
+        {
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/lefthandspacedrag"
+            }
+          },
+          "mode": "button",
+          "parameters": {},
+          "path": "/user/hand/left/input/y"
+        },
+        {
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/phoneback"
+            },
+            "long": {
+              "output": "/actions/main/in/phonehome"
+            }
+          },
+          "mode": "button",
+          "parameters": {
+            "long_press_delay": 0.65,
+            "long_press_expiry": 3
+          },
+          "path": "/user/hand/right/input/b"
+        },
+        {
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/phonerecents"
+            },
+            "long": {
+              "output": "/actions/main/in/phonecontrolpanel"
+            }
+          },
+          "mode": "button",
+          "parameters": {
+            "long_press_delay": 0.65,
+            "long_press_expiry": 3
+          },
+          "path": "/user/hand/right/input/a"
+        },
+        {
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/phoneoverlaytouch"
+            }
+          },
+          "mode": "trigger",
+          "parameters": {},
+          "path": "/user/hand/right/input/trigger"
+        },
+        {
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/phoneoverlaygrab"
+            }
+          },
+          "mode": "trigger",
+          "parameters": {},
+          "path": "/user/hand/right/input/grip"
+        },
+        {
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/phonescreenshot"
+            },
+            "position": {
+              "output": "/actions/main/in/phoneoverlayscale"
+            }
+          },
+          "mode": "joystick",
+          "parameters": {},
+          "path": "/user/hand/right/input/joystick"
+        },
+        {
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/resetoffsets"
+            }
+          },
+          "mode": "button",
+          "parameters": {},
+          "path": "/user/hand/left/input/x"
+        }
+      ]
+    }
+  },
+  "category": "steamvr_input",
+  "controller_type": "pico_controller",
+  "description": "Saved PICO binding: Y drag, X reset, B back/home, A recents/control panel, trigger touch, grip grab, joystick scale/screenshot",
+  "interaction_profile": "",
+  "name": "VRPhoneScreen Overlay - Saved PICO Default",
+  "options": {},
+  "simulated_actions": []
+}

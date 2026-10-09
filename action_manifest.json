@@ -1,0 +1,82 @@
+{
+  "supports_dominant_hand_setting": true,
+  "default_bindings": [
+    { "controller_type": "vive_controller", "binding_url": "bindings/vive_controller.json" },
+    { "controller_type": "holographic_controller", "binding_url": "bindings/wmr.json" },
+    { "controller_type": "knuckles", "binding_url": "bindings/knuckles.json" },
+    { "controller_type": "oculus_touch", "binding_url": "bindings/oculus_touch.json" },
+    { "controller_type": "hpmotioncontroller", "binding_url": "bindings/hp_wmr.json" },
+    { "controller_type": "pico_controller", "binding_url": "bindings/pico_controller.json" },
+    { "controller_type": "pico_controller_ice", "binding_url": "bindings/pico_controller_ice.json" }
+  ],
+  "actions": [
+    { "name": "/actions/main/in/LeftHandSpaceDrag", "requirement": "optional", "type": "boolean" },
+    { "name": "/actions/main/in/RightHandSpaceDrag", "requirement": "optional", "type": "boolean" },
+    { "name": "/actions/main/in/ResetOffsets", "requirement": "optional", "type": "boolean" },
+    { "name": "/actions/main/in/PhoneBack", "requirement": "suggested", "type": "boolean" },
+    { "name": "/actions/main/in/PhoneHome", "requirement": "suggested", "type": "boolean" },
+    { "name": "/actions/main/in/PhoneRecents", "requirement": "suggested", "type": "boolean" },
+    { "name": "/actions/main/in/PhoneControlPanel", "requirement": "suggested", "type": "boolean" },
+    { "name": "/actions/main/in/PhoneScreenshot", "requirement": "suggested", "type": "boolean" },
+    { "name": "/actions/main/in/PhoneOverlayGrab", "requirement": "mandatory", "type": "boolean" },
+    { "name": "/actions/main/in/PhoneOverlayScale", "requirement": "optional", "type": "vector2" },
+    { "name": "/actions/main/in/PhoneOverlayTouch", "requirement": "mandatory", "type": "boolean" },
+    { "name": "/actions/main/in/PhonePointerPose", "requirement": "mandatory", "type": "pose" },
+    { "name": "/actions/pointer/in/PhonePointerPose", "requirement": "optional", "type": "pose" },
+    { "name": "/actions/pointer/in/MenuDismiss", "requirement": "optional", "type": "boolean" },
+    { "name": "/actions/phonerecall/in/RecallMenu", "requirement": "optional", "type": "boolean" },
+    { "name": "/actions/phonebuttonstate/in/AnyPhoneInputPressed", "requirement": "optional", "type": "boolean" },
+    { "name": "/actions/phonecapture/in/button", "requirement": "optional", "type": "boolean" },
+    { "name": "/actions/phonecapture/in/scalar", "requirement": "optional", "type": "vector1" },
+    { "name": "/actions/phonecapture/in/axis", "requirement": "optional", "type": "vector2" }
+  ],
+  "action_sets": [
+    { "name": "/actions/main", "usage": "leftright" },
+    { "name": "/actions/pointer", "usage": "hidden" },
+    { "name": "/actions/phonerecall", "usage": "hidden" },
+    { "name": "/actions/phonebuttonstate", "usage": "hidden" },
+    { "name": "/actions/phonecapture", "usage": "hidden" }
+  ],
+  "localization": [
+    {
+      "language_tag": "en_US",
+      "/actions/main": "VRPhoneScreen Overlay",
+      "/actions/main/in/LeftHandSpaceDrag": "Left Hand Space Drag",
+      "/actions/main/in/RightHandSpaceDrag": "Right Hand Space Drag",
+      "/actions/main/in/ResetOffsets": "Reset Space Offset",
+      "/actions/main/in/PhoneBack": "Android Back",
+      "/actions/main/in/PhoneHome": "Android Home",
+      "/actions/main/in/PhoneRecents": "Android Recent Apps",
+      "/actions/main/in/PhoneControlPanel": "Android Control Panel",
+      "/actions/main/in/PhoneScreenshot": "Android Screenshot",
+      "/actions/main/in/PhoneOverlayGrab": "Grab Phone Overlay",
+      "/actions/main/in/PhoneOverlayScale": "Scale Phone Overlay",
+      "/actions/main/in/PhoneOverlayTouch": "Touch Phone Overlay",
+      "/actions/main/in/PhonePointerPose": "Phone Pointer Pose",
+      "/actions/pointer": "Internal Phone Pointer",
+      "/actions/pointer/in/PhonePointerPose": "Internal Phone Pointer Pose",
+      "/actions/phonebuttonstate": "Internal Phone Input State",
+      "/actions/phonebuttonstate/in/AnyPhoneInputPressed": "Any Phone Input Pressed"
+    },
+    {
+      "language_tag": "zh_CN",
+      "/actions/main": "\u7a7a\u95f4\u62d6\u62fd",
+      "/actions/main/in/LeftHandSpaceDrag": "\u5de6\u624b\u7a7a\u95f4\u62d6\u62fd",
+      "/actions/main/in/RightHandSpaceDrag": "\u53f3\u624b\u7a7a\u95f4\u62d6\u62fd",
+      "/actions/main/in/ResetOffsets": "\u91cd\u7f6e\u7a7a\u95f4\u504f\u79fb",
+      "/actions/main/in/PhoneBack": "\u624b\u673a\u8fd4\u56de",
+      "/actions/main/in/PhoneHome": "\u624b\u673a\u56de\u5230\u684c\u9762",
+      "/actions/main/in/PhoneRecents": "\u624b\u673a\u6700\u8fd1\u4efb\u52a1",
+      "/actions/main/in/PhoneControlPanel": "\u624b\u673a\u63a7\u5236\u680f",
+      "/actions/main/in/PhoneScreenshot": "\u624b\u673a\u622a\u5c4f",
+      "/actions/main/in/PhoneOverlayGrab": "\u79fb\u52a8\u624b\u673a\u6d6e\u7a97",
+      "/actions/main/in/PhoneOverlayScale": "\u7f29\u653e\u624b\u673a\u6d6e\u7a97",
+      "/actions/main/in/PhoneOverlayTouch": "\u89e6\u63a7\u624b\u673a\u6d6e\u7a97",
+      "/actions/main/in/PhonePointerPose": "\u624b\u673a\u6307\u9488\u59ff\u6001",
+      "/actions/pointer": "\u5185\u90e8\u624b\u673a\u6307\u9488",
+      "/actions/pointer/in/PhonePointerPose": "\u5185\u90e8\u624b\u673a\u6307\u9488\u59ff\u6001",
+      "/actions/phonebuttonstate": "\u5185\u90e8\u624b\u673a\u8f93\u5165\u72b6\u6001",
+      "/actions/phonebuttonstate/in/AnyPhoneInputPressed": "\u4efb\u610f\u624b\u673a\u8f93\u5165\u5df2\u6309\u4e0b"
+    }
+  ]
+}

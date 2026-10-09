@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\VRPhoneScreenOverlay.Update\Resources\update-public-key.pem" LogicalName="VRPhoneScreenOverlay.Service.UpdatePublicKey" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Protocols\VRPhoneScreenOverlay.Protocols.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

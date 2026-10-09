@@ -1,0 +1,85 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="QRCoder" />
+    <None Include="Resources\Licenses\*.txt" CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" TargetPath="licenses\%(Filename)%(Extension)" />
+    <None Include="..\..\LICENSE" Link="Resources\Licenses\VRPhoneScreenOverlay-LICENSE.txt"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+          TargetPath="licenses\VRPhoneScreenOverlay-LICENSE.txt" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Presentation\VRPhoneScreenOverlay.Presentation.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Android\VRPhoneScreenOverlay.Android.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Contracts\VRPhoneScreenOverlay.Contracts.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Core\VRPhoneScreenOverlay.Core.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Diagnostics\VRPhoneScreenOverlay.Diagnostics.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Input\VRPhoneScreenOverlay.Input.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Media\VRPhoneScreenOverlay.Media.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Network\VRPhoneScreenOverlay.Network.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.PhotoSync\VRPhoneScreenOverlay.PhotoSync.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Protocols\VRPhoneScreenOverlay.Protocols.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Session\VRPhoneScreenOverlay.Session.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Sharing\VRPhoneScreenOverlay.Sharing.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Settings\VRPhoneScreenOverlay.Settings.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.SteamVR\VRPhoneScreenOverlay.SteamVR.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Update\VRPhoneScreenOverlay.Update.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\author-douyin.jpg" />
+    <EmbeddedResource Include="Assets\github-mark.png" />
+    <EmbeddedResource Include="Assets\steam.png" LogicalName="VRPhoneScreenOverlay.App.Assets.steam.png" />
+    <EmbeddedResource Include="Assets\steamvr.png" LogicalName="VRPhoneScreenOverlay.App.Assets.steamvr.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Views\MainShellView.cs"><SubType>UserControl</SubType></Compile>
+    <Compile Update="Views\MainShellView.Designer.cs"><DependentUpon>MainShellView.cs</DependentUpon></Compile>
+    <EmbeddedResource Update="Views\MainShellView.resx"><DependentUpon>MainShellView.cs</DependentUpon></EmbeddedResource>
+    <Compile Update="Views\WirelessConnectionView.cs"><SubType>UserControl</SubType></Compile>
+    <Compile Update="Views\WirelessConnectionView.Designer.cs"><DependentUpon>WirelessConnectionView.cs</DependentUpon></Compile>
+    <EmbeddedResource Update="Views\WirelessConnectionView.resx"><DependentUpon>WirelessConnectionView.cs</DependentUpon></EmbeddedResource>
+    <Compile Update="Views\HomePageView.cs"><SubType>UserControl</SubType></Compile>
+    <Compile Update="Views\HomePageView.Designer.cs"><DependentUpon>HomePageView.cs</DependentUpon></Compile>
+    <EmbeddedResource Update="Views\HomePageView.resx"><DependentUpon>HomePageView.cs</DependentUpon></EmbeddedResource>
+    <Compile Update="Views\SettingsPageView.cs"><SubType>UserControl</SubType></Compile>
+    <Compile Update="Views\VideoPageView.cs"><SubType>UserControl</SubType></Compile>
+    <Compile Update="Views\VideoPageView.Designer.cs"><DependentUpon>VideoPageView.cs</DependentUpon></Compile>
+    <EmbeddedResource Update="Views\VideoPageView.resx"><DependentUpon>VideoPageView.cs</DependentUpon></EmbeddedResource>
+    <Compile Update="Views\ControllerBindingsView.cs"><SubType>UserControl</SubType></Compile>
+    <Compile Update="Views\ControllerBindingsView.Designer.cs"><DependentUpon>ControllerBindingsView.cs</DependentUpon></Compile>
+    <EmbeddedResource Update="Views\ControllerBindingsView.resx"><DependentUpon>ControllerBindingsView.cs</DependentUpon></EmbeddedResource>
+    <Compile Update="Views\SettingsPageView.Designer.cs"><DependentUpon>SettingsPageView.cs</DependentUpon></Compile>
+    <EmbeddedResource Update="Views\SettingsPageView.resx"><DependentUpon>SettingsPageView.cs</DependentUpon></EmbeddedResource>
+    <Compile Update="Views\OnlinePageView.cs"><SubType>UserControl</SubType></Compile>
+    <Compile Update="Views\OnlinePageView.Designer.cs"><DependentUpon>OnlinePageView.cs</DependentUpon></Compile>
+    <EmbeddedResource Update="Views\OnlinePageView.resx"><DependentUpon>OnlinePageView.cs</DependentUpon></EmbeddedResource>
+    <Compile Update="Views\AboutPageView.cs"><SubType>UserControl</SubType></Compile>
+    <Compile Update="Views\AboutPageView.Designer.cs"><DependentUpon>AboutPageView.cs</DependentUpon></Compile>
+    <EmbeddedResource Update="Views\AboutPageView.resx"><DependentUpon>AboutPageView.cs</DependentUpon></EmbeddedResource>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>VRPhoneScreenOverlay</AssemblyName>
+    <RootNamespace>VRPhoneScreenOverlay.App</RootNamespace>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <!-- Keep the normal host for existing update clients, and a second native host
+       that loads the same application directly from the portable app/ directory. -->
+  <Target Name="CreatePortableAppHost" AfterTargets="Publish">
+    <MakeDir Directories="$(PublishDir)layout" />
+    <CreateAppHost AppHostSourcePath="$(AppHostSourcePath)"
+                   AppHostDestinationPath="$(PublishDir)layout\VRPhoneScreenOverlay.exe"
+                   AppBinaryName="app/VRPhoneScreenOverlay.dll"
+                   IntermediateAssembly="@(IntermediateAssembly->'%(FullPath)')"
+                   WindowsGraphicalUserInterface="true" />
+  </Target>
+
+</Project>

@@ -1,0 +1,30 @@
+<Project>
+  <PropertyGroup>
+    <VersionPrefix>0.2.7</VersionPrefix>
+    <Product>VRPhoneScreen Overlay</Product>
+    <Authors>VRPhoneScreen Overlay contributors</Authors>
+    <Copyright>Copyright (c) VRPhoneScreen Overlay contributors</Copyright>
+    <LangVersion>14.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>10-recommended</AnalysisLevel>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- XML output enables build-time unused-using analysis. Public API docs are added as APIs stabilize. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <Deterministic>true</Deterministic>
+    <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!-- Every supported artifact is Windows x64; keep RID data in lock files so publish restores stay deterministic. -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(CI)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <RestoreLockedMode>true</RestoreLockedMode>
+  </PropertyGroup>
+</Project>

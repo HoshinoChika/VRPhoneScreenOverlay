@@ -1,0 +1,22 @@
+{
+  "source": "builtin",
+  "applications": [
+    {
+      "app_key": "local.spacedraglite.desktop.v1",
+      "launch_type": "binary",
+      "is_dashboard_overlay": true,
+      "binary_path_windows": "VRPhoneScreenOverlay.exe",
+      "action_manifest_path": "action_manifest.json",
+      "strings": {
+        "en_us": {
+          "name": "VRPhoneScreen Overlay",
+          "description": "Native Android phone overlay for SteamVR"
+        },
+        "zh_cn": {
+          "name": "VRPhoneScreen Overlay",
+          "description": "SteamVR 原生安卓手机浮窗"
+        }
+      }
+    }
+  ]
+}

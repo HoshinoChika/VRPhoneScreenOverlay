@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Presentation\VRPhoneScreenOverlay.Presentation.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Contracts\VRPhoneScreenOverlay.Contracts.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Media\VRPhoneScreenOverlay.Media.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D11" />
+    <EmbeddedResource Include="Resources\UI\phone-rounded.vs.cso" WithCulture="false" LogicalName="VRPhoneScreenOverlay.SteamVR.PhoneRoundedVertex" />
+    <EmbeddedResource Include="Resources\UI\phone-rounded.ps.cso" WithCulture="false" LogicalName="VRPhoneScreenOverlay.SteamVR.PhoneRoundedPixel" />
+    <EmbeddedResource Include="Resources\UI\phone-menu-labels.alpha" LogicalName="VRPhoneScreenOverlay.SteamVR.PhoneMenuLabels" />
+    <EmbeddedResource Include="Resources\UI\control-glyphs.alpha" LogicalName="VRPhoneScreenOverlay.SteamVR.ControlGlyphs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\action_manifest.json"
+          Link="action_manifest.json"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          TargetPath="action_manifest.json" />
+    <None Include="..\..\bindings\*.json"
+          Link="bindings\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="Never"
+          TargetPath="bindings\%(Filename)%(Extension)" />
+    <None Update="Resources\SteamVR\manifest.vrmanifest"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          TargetPath="manifest.vrmanifest" />
+    <None Update="Resources\OpenVR\openvr_api.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          TargetPath="openvr_api.dll" />
+    <None Update="Resources\OpenVR\LICENSE-VALVE"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          TargetPath="licenses\OpenVR-LICENSE.txt" />
+    <None Update="Resources\OpenVR\OVRAS-*.txt"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          TargetPath="licenses\%(Filename)%(Extension)" />
+    <None Update="Resources\OpenVR\Vortice-LICENSE"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          TargetPath="licenses\Vortice-LICENSE.txt" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

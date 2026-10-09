@@ -1,0 +1,25 @@
+{
+  "SchemaVersion": 1,
+  "Client": {
+    "UpdateManifestUri": null,
+    "DiagnosticsInitUri": null,
+    "UsageHeartbeatUri": null,
+    "ProjectRepositoryUri": null,
+    "UpdateChannel": "beta"
+  },
+  "Deployment": {
+    "PublicBaseUri": "",
+    "PrivateHealthUri": "",
+    "UsageStatisticsUri": "",
+    "SshKeyPath": "",
+    "UpdateSigningKeyPath": "",
+    "ServerRecordPath": "",
+    "RemoteRoot": "/var/lib/vrphonescreen-service/updates/beta",
+    "ServiceName": "vrphonescreen.service",
+    "CloudSetup": {
+      "OpenListEndpoint": "",
+      "DatabasePath": "",
+      "SourceMount": ""
+    }
+  }
+}

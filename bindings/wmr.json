@@ -1,0 +1,40 @@
+{
+  "action_manifest_version": 0,
+  "app_key": "local.spacedraglite.desktop.v1",
+  "controller_type": "holographic_controller",
+  "name": "VRPhoneScreen Overlay - WMR Default",
+  "description": "PICO-style layout adapted for classic Windows Mixed Reality controllers",
+  "bindings": { "/actions/main": {
+    "poses": [
+      { "output": "/actions/main/in/phonepointerpose", "path": "/user/hand/right/pose/raw" }
+    ],
+    "sources": [
+      { "path": "/user/hand/left/input/application_menu", "mode": "button", "inputs": {
+        "click": { "output": "/actions/main/in/lefthandspacedrag" }
+      } },
+      { "path": "/user/hand/left/input/joystick", "mode": "button", "inputs": {
+        "click": { "output": "/actions/main/in/resetoffsets" }
+      } },
+      { "path": "/user/hand/right/input/application_menu", "mode": "button", "inputs": {
+        "click": { "output": "/actions/main/in/phoneback" },
+        "long": { "output": "/actions/main/in/phonehome" }
+      }, "parameters": { "long_press_delay": 0.65, "long_press_expiry": 3 } },
+      { "path": "/user/hand/right/input/trackpad", "mode": "button", "inputs": {
+        "click": { "output": "/actions/main/in/phonerecents" },
+        "long": { "output": "/actions/main/in/phonecontrolpanel" }
+      }, "parameters": { "long_press_delay": 0.65, "long_press_expiry": 3 } },
+      { "path": "/user/hand/right/input/trigger", "mode": "trigger", "inputs": {
+        "click": { "output": "/actions/main/in/phoneoverlaytouch" }
+      } },
+      { "path": "/user/hand/right/input/grip", "mode": "button", "inputs": {
+        "click": { "output": "/actions/main/in/phoneoverlaygrab" }
+      } },
+      { "path": "/user/hand/right/input/joystick", "mode": "joystick", "inputs": {
+        "click": { "output": "/actions/main/in/phonescreenshot" },
+        "position": { "output": "/actions/main/in/phoneoverlayscale" }
+      } }
+    ]
+  } },
+  "options": {},
+  "simulated_actions": []
+}

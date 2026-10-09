@@ -1,0 +1,17 @@
+{
+  "name": "Valve OpenVR SDK",
+  "version": "2.15.6",
+  "source": "https://github.com/ValveSoftware/openvr/releases/tag/v2.15.6",
+  "license": "BSD-3-Clause",
+  "files": {
+    "openvr_api.dll": "bab8ac6ef64e68a9ca53315b0014d131088584b2efdfa6db511d67ec03cfcb4a",
+    "LICENSE-VALVE": "f56ff606104d4ef18e617921a75c73ad73b5a1a1d70c69590c29de16919e04ad",
+    "Vortice-LICENSE": "82bd4e84d144bebbb519ed05899f0ceaeaf2e0f95160ac32fd8cc388710c76d0"
+  },
+  "binding": {
+    "path": "../../OpenVR/openvr_api.cs",
+    "upstreamSha256": "157a59651bb0b0c48f8ff7ceb0089a06f53264de240cb202a1c5430721b505ad",
+    "packagedSha256": "2240ae628c9d6b5eb7e2245e9c53a34583a27a410635c47212523f10c261c099",
+    "localChange": "Nullable analysis disabled for generated binding only."
+  }
+}

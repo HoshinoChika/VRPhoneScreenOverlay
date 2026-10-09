@@ -1,0 +1,47 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Android\VRPhoneScreenOverlay.Android.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.App\VRPhoneScreenOverlay.App.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Contracts\VRPhoneScreenOverlay.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Core\VRPhoneScreenOverlay.Core.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Diagnostics\VRPhoneScreenOverlay.Diagnostics.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Input\VRPhoneScreenOverlay.Input.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Media\VRPhoneScreenOverlay.Media.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Maintenance\VRPhoneScreenOverlay.Maintenance.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Network\VRPhoneScreenOverlay.Network.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Service\VRPhoneScreenOverlay.Service.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Session\VRPhoneScreenOverlay.Session.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Sharing\VRPhoneScreenOverlay.Sharing.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Settings\VRPhoneScreenOverlay.Settings.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.SteamVR\VRPhoneScreenOverlay.SteamVR.csproj" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.SteamVR.BindingTool\VRPhoneScreenOverlay.SteamVR.BindingTool.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\src\VRPhoneScreenOverlay.Update\VRPhoneScreenOverlay.Update.csproj" />
+  </ItemGroup>
+
+  <Target Name="CopyBindingToolForDeviceTests" AfterTargets="Build">
+    <ItemGroup>
+      <BindingToolFiles Include="..\..\src\VRPhoneScreenOverlay.SteamVR.BindingTool\bin\$(Configuration)\$(TargetFramework)\win-x64\VRPhoneScreenOverlay.SteamVR.BindingTool.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(BindingToolFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

@@ -1,0 +1,15 @@
+scrcpy server 4.1
+Copyright (C) 2018 Genymobile
+
+Upstream project and matching source:
+https://github.com/Genymobile/scrcpy/tree/v4.1
+
+License: Apache License 2.0
+https://github.com/Genymobile/scrcpy/blob/v4.1/LICENSE
+
+The bundled server hash is recorded in manifest.json and validated by the application before use.
+
+VRPhoneScreen Overlay applies third_party/scrcpy/vrphonescreen-user-activity.patch.
+The patch adds control message type 127, which invokes scrcpy's existing
+Device.keepActive(displayId) method. The patch and build provenance are included
+in the source repository.

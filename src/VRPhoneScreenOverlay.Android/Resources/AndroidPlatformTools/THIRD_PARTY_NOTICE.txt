@@ -1,0 +1,12 @@
+Android Debug Bridge and the accompanying Windows libraries are from Android SDK Platform-Tools.
+
+Upstream source:
+https://android.googlesource.com/platform/packages/modules/adb/
+
+Android Open Source Project license information:
+https://source.android.com/docs/setup/about/licenses
+
+Bundled tool version: 37.0.0-14910828
+
+The exact binary hashes are recorded in manifest.json and checked by the application before use.
+Before a public binary release, the project release gate must verify this package's provenance and include every upstream notice required by the selected Platform-Tools distribution.
