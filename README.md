@@ -84,6 +84,13 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 
 仍有问题可在软件“关于”页填写现象并上传诊断，或到 [Issues](https://github.com/HoshinoChika/VRPhoneScreenOverlay/issues) 反馈。请说明版本、设备和复现步骤。
 
+## 贡献者
+
+| 贡献者 | 分工 |
+| :--- | :--- |
+| [HoshinoChika](https://github.com/HoshinoChika) | 提出项目想法和功能需求，负责实际使用中的测试与验收。 |
+| Codex（GPT-6.1 Sol、GPT-6 Astra） | 根据需求完成实际开发，包括代码实现、问题修复和相关验证。 |
+
 ## 参考项目
 
 本项目使用或参考了以下项目：
