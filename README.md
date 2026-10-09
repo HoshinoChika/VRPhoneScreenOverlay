@@ -40,7 +40,7 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 
 ## 下载
 
-**[GitHub 下载](https://github.com/HoshinoChika/VRPhoneScreenOverlay/releases/latest)**，或[打开 HoshinoChika 网站](https://hoshinochika.com/)，点击右上角“下载”。
+**[GitHub 下载](https://github.com/HoshinoChika/VRPhoneScreenOverlay/releases/latest)**，或到[官网下载页](https://hoshinochika.com/vrpso/download/)下载。
 
 下载 Windows x64 ZIP，解压后运行 `VRPhoneScreenOverlay.exe`。
 
