@@ -20,8 +20,4 @@
     <Project Path="src/VRPhoneScreenOverlay.SteamVR.BindingTool/VRPhoneScreenOverlay.SteamVR.BindingTool.csproj" />
     <Project Path="src/VRPhoneScreenOverlay.Update/VRPhoneScreenOverlay.Update.csproj" />
   </Folder>
-  <Folder Name="/tests/">
-    <Project Path="tests/VRPhoneScreenOverlay.Tests.Architecture/VRPhoneScreenOverlay.Tests.Architecture.csproj" />
-    <Project Path="tests/VRPhoneScreenOverlay.Tests.Unit/VRPhoneScreenOverlay.Tests.Unit.csproj" />
-  </Folder>
 </Solution>
