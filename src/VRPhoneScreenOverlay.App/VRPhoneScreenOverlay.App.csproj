@@ -15,7 +15,6 @@
     <ProjectReference Include="..\VRPhoneScreenOverlay.Input\VRPhoneScreenOverlay.Input.csproj" />
     <ProjectReference Include="..\VRPhoneScreenOverlay.Media\VRPhoneScreenOverlay.Media.csproj" />
     <ProjectReference Include="..\VRPhoneScreenOverlay.Network\VRPhoneScreenOverlay.Network.csproj" />
-    <ProjectReference Include="..\VRPhoneScreenOverlay.PhotoSync\VRPhoneScreenOverlay.PhotoSync.csproj" />
     <ProjectReference Include="..\VRPhoneScreenOverlay.Protocols\VRPhoneScreenOverlay.Protocols.csproj" />
     <ProjectReference Include="..\VRPhoneScreenOverlay.Session\VRPhoneScreenOverlay.Session.csproj" />
     <ProjectReference Include="..\VRPhoneScreenOverlay.Sharing\VRPhoneScreenOverlay.Sharing.csproj" />

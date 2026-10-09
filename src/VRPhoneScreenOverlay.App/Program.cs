@@ -17,17 +17,6 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        if (args.Length == 1 && string.Equals(args[0], "--smoke-test", StringComparison.Ordinal))
-        {
-            return AppSmokeTest.Run();
-        }
-
-        if (args.Contains("--ui-snapshot", StringComparer.Ordinal))
-        {
-            ApplicationConfiguration.Initialize();
-            return UiSnapshotGenerator.Run(ReadArgument(args, "--ui-snapshot-output"), ReadArgument(args, "--ui-snapshot-only"));
-        }
-
         string? updateHealthFile = ReadArgument(args, "--update-health-file");
         string? updateHealthToken = ReadArgument(args, "--update-health-token");
 

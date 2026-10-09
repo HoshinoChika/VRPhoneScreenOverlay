@@ -9,10 +9,8 @@
     <Project Path="src/VRPhoneScreenOverlay.Maintenance/VRPhoneScreenOverlay.Maintenance.csproj" />
     <Project Path="src/VRPhoneScreenOverlay.Media/VRPhoneScreenOverlay.Media.csproj" />
     <Project Path="src/VRPhoneScreenOverlay.Network/VRPhoneScreenOverlay.Network.csproj" />
-    <Project Path="src/VRPhoneScreenOverlay.PhotoSync/VRPhoneScreenOverlay.PhotoSync.csproj" />
     <Project Path="src/VRPhoneScreenOverlay.Presentation/VRPhoneScreenOverlay.Presentation.csproj" />
     <Project Path="src/VRPhoneScreenOverlay.Protocols/VRPhoneScreenOverlay.Protocols.csproj" />
-    <Project Path="src/VRPhoneScreenOverlay.Service/VRPhoneScreenOverlay.Service.csproj" />
     <Project Path="src/VRPhoneScreenOverlay.Session/VRPhoneScreenOverlay.Session.csproj" />
     <Project Path="src/VRPhoneScreenOverlay.Sharing/VRPhoneScreenOverlay.Sharing.csproj" />
     <Project Path="src/VRPhoneScreenOverlay.Settings/VRPhoneScreenOverlay.Settings.csproj" />
