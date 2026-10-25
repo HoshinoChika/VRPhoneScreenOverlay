@@ -110,7 +110,7 @@
       "vrphonescreenoverlay.android": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )"
         }
       },
       "vrphonescreenoverlay.contracts": {
@@ -119,21 +119,21 @@
       "vrphonescreenoverlay.core": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )"
         }
       },
       "vrphonescreenoverlay.diagnostics": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Network": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Protocols": "[0.2.7, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Network": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Protocols": "[0.2.8, )"
         }
       },
       "vrphonescreenoverlay.input": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )"
         }
       },
       "vrphonescreenoverlay.media": {
@@ -141,22 +141,15 @@
         "dependencies": {
           "Concentus": "[2.2.2, )",
           "NAudio": "[3.0.0, )",
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
           "Vortice.MediaFoundation": "[3.8.3, )"
         }
       },
       "vrphonescreenoverlay.network": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Protocols": "[0.2.7, )"
-        }
-      },
-      "vrphonescreenoverlay.photosync": {
-        "type": "Project",
-        "dependencies": {
-          "VRPhoneScreenOverlay.Android": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Protocols": "[0.2.8, )"
         }
       },
       "vrphonescreenoverlay.presentation": {
@@ -168,12 +161,12 @@
       "vrphonescreenoverlay.session": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Android": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Input": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Media": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Settings": "[0.2.7, )",
-          "VRPhoneScreenOverlay.SteamVR": "[0.2.7, )"
+          "VRPhoneScreenOverlay.Android": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Input": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Media": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Settings": "[0.2.8, )",
+          "VRPhoneScreenOverlay.SteamVR": "[0.2.8, )"
         }
       },
       "vrphonescreenoverlay.settings": {
@@ -182,27 +175,27 @@
       "vrphonescreenoverlay.sharing": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Media": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Network": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Protocols": "[0.2.7, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Media": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Network": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Protocols": "[0.2.8, )"
         }
       },
       "vrphonescreenoverlay.steamvr": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Media": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Presentation": "[0.2.7, )",
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Media": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Presentation": "[0.2.8, )",
           "Vortice.Direct3D11": "[3.8.3, )"
         }
       },
       "vrphonescreenoverlay.update": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Network": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Protocols": "[0.2.7, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Network": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Protocols": "[0.2.8, )"
         }
       },
       "Concentus": {

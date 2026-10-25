@@ -47,7 +47,7 @@ internal sealed partial class MainForm
         catch (Exception)
         {
             if (!IsDisposed && !Disposing)
-            { _bindingGuideView.OperationStatus.Text = "手柄识别暂时不可用，请重新打开软件 [CONTROLLER_MONITOR_FAILED]"; }
+            { _bindingGuideView.OperationStatus.Text = "手柄识别暂时不可用，请重新打开软件"; }
         }
         finally { _controllerMonitorRunning = false; }
     }

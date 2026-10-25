@@ -5,7 +5,7 @@ namespace VRPhoneScreenOverlay.App;
 public sealed class ControllerBindingInstructions : UserControl
 {
     private static readonly string[] _actions =
-        ["抓握", "触屏点击", "缩放 / 滚动", "返回", "桌面", "最近任务", "控制栏", "截屏", "隐藏后唤回", "空间拖拽", "重置空间"];
+        ["抓握", "触屏点击", "缩放 / 滚动", "返回", "桌面", "最近任务", "控制栏", "截屏", "唤回手机", "空间拖拽", "重置空间"];
     private readonly SurfacePanel _phonePanel = new() { Name = "phoneInstructionsPanel", SurfaceColor = UiPalette.SurfaceRaised, BorderColor = UiPalette.BorderSoft, CornerRadius = 10, Margin = Padding.Empty };
     private readonly SurfacePanel _spacePanel = new() { Name = "playspaceInstructionsPanel", SurfaceColor = UiPalette.SurfaceRaised, BorderColor = UiPalette.BorderSoft, CornerRadius = 10, Margin = Padding.Empty };
     private readonly TableLayoutPanel _phoneRows = CreateRows();
@@ -177,8 +177,8 @@ public sealed class ControllerBindingInstructions : UserControl
     {
         string inputs = FormatInputs(entries.Where(entry => entry.Action == action));
         if (action == "重置空间" && inputs != "未绑定") { return inputs + " · 按所选重置方式"; }
-        return action == "隐藏后唤回" && inputs != "未绑定"
-            ? inputs + " → 直接显示手机"
+        return action == "唤回手机" && inputs != "未绑定"
+            ? inputs + " → 显示并放回头显前方"
             : inputs;
     }
 
@@ -188,7 +188,7 @@ public sealed class ControllerBindingInstructions : UserControl
             .Select(entry => (entry.DevicePath.EndsWith("/left", StringComparison.Ordinal) ? "左手 " :
                 entry.DevicePath.EndsWith("/right", StringComparison.Ordinal) ? "右手 " : "") +
                 InputLabel(entry.InputPath) +
-                (entry.Action == "隐藏后唤回" ? "（长按 2 秒）" : entry.Slot == "click" && entry.InputPath.Split('/')[^1] is "thumbstick" or "joystick" or "trackpad"
+                (entry.Action == "唤回手机" ? "（长按 2 秒）" : entry.Slot == "click" && entry.InputPath.Split('/')[^1] is "thumbstick" or "joystick" or "trackpad"
                     ? "（按下）" : SlotLabel(entry.Slot))).Distinct().ToArray();
         return inputs.Length == 0 ? "未绑定" : string.Join(" / ", inputs);
     }

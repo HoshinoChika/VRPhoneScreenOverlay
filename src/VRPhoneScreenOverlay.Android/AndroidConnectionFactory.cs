@@ -50,9 +50,8 @@ public static class AndroidConnectionFactory
         ArgumentNullException.ThrowIfNull(logSink);
 
         string resources = Path.Combine(AppContext.BaseDirectory, "resources");
-        string toolPath = Path.Combine(resources, "android-platform-tools", "adb.exe");
         string serverPath = Path.Combine(resources, "scrcpy", "scrcpy-server-v4.1");
-        AdbCommandRunner commandRunner = new(toolPath);
+        AdbCommandRunner commandRunner = service.CreateCommandRunner();
         ScrcpySessionLauncher launcher = new(commandRunner, serverPath, logSink);
         return new AndroidSessionFactories(
             new ScrcpyVideoSessionFactory(service, launcher, logSink),
@@ -86,24 +85,14 @@ public static class AndroidConnectionFactory
     {
         AndroidConnectionService service = RequireDefaultConnection(connection);
         ArgumentNullException.ThrowIfNull(logSink);
-        string toolPath = Path.Combine(
-            AppContext.BaseDirectory,
-            "resources",
-            "android-platform-tools",
-            "adb.exe");
-        return new AndroidMediaPlaybackControl(service, new AdbCommandRunner(toolPath), logSink);
+        return new AndroidMediaPlaybackControl(service, service.CreateCommandRunner(), logSink);
     }
 
     public static IAndroidKeyguardStateService CreateDefaultKeyguardStateService(
         IAndroidConnectionService connection)
     {
         AndroidConnectionService service = RequireDefaultConnection(connection);
-        string toolPath = Path.Combine(
-            AppContext.BaseDirectory,
-            "resources",
-            "android-platform-tools",
-            "adb.exe");
-        return new AndroidKeyguardStateService(service, new AdbCommandRunner(toolPath));
+        return new AndroidKeyguardStateService(service, service.CreateCommandRunner());
     }
 
     private static AndroidConnectionService RequireDefaultConnection(

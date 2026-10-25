@@ -14,6 +14,7 @@ internal static class OpenVrGenericBinding
         binding["controller_type"] = controllerType;
         binding["name"] = "VRPhoneScreen Overlay - Generic Default";
         binding["description"] = "Generic controller defaults using the PICO layout";
+        OpenVrBindingParameterPolicy.ApplyKnownGenericTrigger(binding, controllerType);
         return binding.ToJsonString();
     }
 }

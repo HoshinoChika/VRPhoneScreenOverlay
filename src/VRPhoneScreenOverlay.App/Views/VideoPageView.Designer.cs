@@ -135,7 +135,7 @@ partial class VideoPageView
         // discardButton
         discardButton.Location = new Point(374, 368);
         discardButton.Size = new Size(98, 38);
-        discardButton.Text = "撤销";
+        discardButton.Text = "取消";
         discardButton.Icon = UiIcons.Undo;
         discardButton.Name = "discardButton";
         // applyButton

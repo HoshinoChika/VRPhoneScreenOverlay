@@ -14,6 +14,7 @@ partial class AboutPageView
     private Label diagnosticsTitle = null!;
     private Label diagnosticsDescription = null!;
     private ModernButton uploadDiagnosticsButton = null!;
+    private ModernButton openDiagnosticLogsButton = null!;
     private SurfacePanel productCard = null!;
     private Label productTitle = null!;
     private Label productDetails = null!;
@@ -38,6 +39,9 @@ partial class AboutPageView
     private Label descriptionCounter = null!;
     private ModernButton cancelDiagnosticReportButton = null!;
     private ModernButton confirmDiagnosticUploadButton = null!;
+    private TroubleshootingPageView troubleshootingPage = null!;
+    private ModernButton deepSeekDiagnosticsButton = null!;
+    private ModernButton viewAiHistoryButton = null!;
 
     private ContextHelpIcon updateTitleHelp;
     private ContextHelpIcon diagnosticsTitleHelp;
@@ -67,6 +71,7 @@ partial class AboutPageView
         diagnosticsTitle = new Label();
         diagnosticsDescription = new Label();
         uploadDiagnosticsButton = new ModernButton();
+        openDiagnosticLogsButton = new ModernButton();
         productCard = new SurfacePanel();
         productTitle = new Label();
         productDetails = new Label();
@@ -91,6 +96,9 @@ partial class AboutPageView
         descriptionCounter = new Label();
         cancelDiagnosticReportButton = new ModernButton();
         confirmDiagnosticUploadButton = new ModernButton();
+        troubleshootingPage = new TroubleshootingPageView();
+        deepSeekDiagnosticsButton = new ModernButton();
+        viewAiHistoryButton = new ModernButton();
         updateCard.SuspendLayout();
         diagnosticsCard.SuspendLayout();
         productCard.SuspendLayout();
@@ -158,6 +166,7 @@ partial class AboutPageView
         diagnosticsCard.Controls.Add(diagnosticsTitle);
         diagnosticsCard.Controls.Add(diagnosticsDescription);
         diagnosticsCard.Controls.Add(uploadDiagnosticsButton);
+        diagnosticsCard.Controls.Add(openDiagnosticLogsButton);
         diagnosticsCard.CornerRadius = 14;
         diagnosticsCard.Location = new Point(0, 132);
         diagnosticsCard.Name = "diagnosticsCard";
@@ -179,8 +188,13 @@ partial class AboutPageView
         diagnosticsDescription.ForeColor = UiPalette.TextSecondary;
         diagnosticsDescription.Location = new Point(16, 42);
         diagnosticsDescription.Name = "diagnosticsDescription";
-        diagnosticsDescription.Size = new Size(380, 28);
-        diagnosticsDescription.Text = "运行状态与脱敏日志";
+        diagnosticsDescription.Size = new Size(278, 28);
+        diagnosticsDescription.Text = "上传最近 6 小时 · 本地保留 24 小时";
+        // openDiagnosticLogsButton
+        openDiagnosticLogsButton.Location = new Point(304, 20);
+        openDiagnosticLogsButton.Name = "openDiagnosticLogsButton";
+        openDiagnosticLogsButton.Size = new Size(132, 38);
+        openDiagnosticLogsButton.Text = "打开软件日志";
         // uploadDiagnosticsButton
         uploadDiagnosticsButton.Icon = UiIcons.Upload;
         uploadDiagnosticsButton.Location = new Point(448, 20);
@@ -320,18 +334,33 @@ partial class AboutPageView
         descriptionCounter.Text = "0 / 300";
         descriptionCounter.TextAlign = ContentAlignment.MiddleRight;
         descriptionCounter.UseMnemonic = false;
+        // deepSeekDiagnosticsButton
+        deepSeekDiagnosticsButton.Name = "deepSeekDiagnosticsButton";
+        deepSeekDiagnosticsButton.Location = new Point(20, 322);
+        deepSeekDiagnosticsButton.Size = new Size(176, 34);
+        deepSeekDiagnosticsButton.Font = new Font("Microsoft YaHei UI", 8F, FontStyle.Regular, GraphicsUnit.Point);
+        deepSeekDiagnosticsButton.Text = "使用DeepSeek排查故障";
+        deepSeekDiagnosticsButton.Enabled = false;
+        diagnosticReportPanel.Controls.Add(deepSeekDiagnosticsButton);
+        // viewAiHistoryButton
+        viewAiHistoryButton.Name = "viewAiHistoryButton";
+        viewAiHistoryButton.Location = new Point(208, 322);
+        viewAiHistoryButton.Size = new Size(132, 34);
+        viewAiHistoryButton.Font = new Font("Microsoft YaHei UI", 8F, FontStyle.Regular, GraphicsUnit.Point);
+        viewAiHistoryButton.Text = "查看AI诊断历史";
+        diagnosticReportPanel.Controls.Add(viewAiHistoryButton);
         // cancelDiagnosticReportButton
         cancelDiagnosticReportButton.Icon = UiIcons.Close;
-        cancelDiagnosticReportButton.Location = new Point(344, 318);
+        cancelDiagnosticReportButton.Location = new Point(380, 322);
         cancelDiagnosticReportButton.Name = "cancelDiagnosticReportButton";
-        cancelDiagnosticReportButton.Size = new Size(108, 40);
+        cancelDiagnosticReportButton.Size = new Size(72, 34);
         cancelDiagnosticReportButton.Text = "取消";
         // confirmDiagnosticUploadButton
         confirmDiagnosticUploadButton.Enabled = false;
         confirmDiagnosticUploadButton.Icon = UiIcons.Upload;
-        confirmDiagnosticUploadButton.Location = new Point(464, 318);
+        confirmDiagnosticUploadButton.Location = new Point(460, 322);
         confirmDiagnosticUploadButton.Name = "confirmDiagnosticUploadButton";
-        confirmDiagnosticUploadButton.Size = new Size(112, 40);
+        confirmDiagnosticUploadButton.Size = new Size(116, 34);
         confirmDiagnosticUploadButton.Text = "开始上传";
         // AboutPageView
         AutoScaleMode = AutoScaleMode.None;
@@ -398,6 +427,11 @@ partial class AboutPageView
         enlargedCodePanel.Controls.Add(closeCodeButton);
         Controls.Add(enlargedCodePanel);
         Name = "AboutPageView";
+        troubleshootingPage.Name = "troubleshootingPage";
+        troubleshootingPage.Location = new Point(0, 0);
+        troubleshootingPage.Size = new Size(596, 424);
+        troubleshootingPage.Visible = false;
+        Controls.Add(troubleshootingPage);
         Size = new Size(596, 424);
         updateCard.ResumeLayout(false);
         diagnosticsCard.ResumeLayout(false);

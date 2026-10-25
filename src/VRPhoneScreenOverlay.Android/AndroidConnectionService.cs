@@ -6,6 +6,8 @@ internal sealed partial class AndroidConnectionService : IAndroidConnectionServi
     private readonly IAndroidConnectionLogSink _log;
     private readonly AndroidConnectionServiceOptions _options;
     private readonly IAdbServerShutdown _adbServerShutdown;
+    private readonly AdbRuntimeFiles _runtimeFiles;
+    private bool _componentRecoveryBlocked;
     private readonly WirelessAdbConnector _wireless;
     private readonly WirelessAdbReconnect _wirelessReconnect;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
@@ -39,9 +41,7 @@ internal sealed partial class AndroidConnectionService : IAndroidConnectionServi
             resourceDirectory,
             log,
             options,
-            new BundledAdbServerShutdown(
-                resourceDirectory,
-                (options ?? throw new ArgumentNullException(nameof(options))).CommandTimeout))
+            new PreserveSharedAdbServer())
     {
     }
 
@@ -54,6 +54,7 @@ internal sealed partial class AndroidConnectionService : IAndroidConnectionServi
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceDirectory);
         _resourceDirectory = Path.GetFullPath(resourceDirectory);
+        _runtimeFiles = new AdbRuntimeFiles(_resourceDirectory, log: log);
         _wireless = new WirelessAdbConnector(wirelessRunnerFactory ?? CreateWirelessRunnerAsync);
         _log = log ?? throw new ArgumentNullException(nameof(log));
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -85,6 +86,9 @@ internal sealed partial class AndroidConnectionService : IAndroidConnectionServi
     }
 
     public event EventHandler<AndroidConnectionChangedEventArgs>? StateChanged;
+
+    internal AdbCommandRunner CreateCommandRunner() => new(Path.Combine(_resourceDirectory, "adb.exe"),
+        resolveExecutable: _runtimeFiles.ResolveAsync, log: _log, verifySharedServer: true);
 
     public ValueTask StartAsync(CancellationToken cancellationToken)
     {
@@ -139,15 +143,10 @@ internal sealed partial class AndroidConnectionService : IAndroidConnectionServi
 
     private async ValueTask<IAdbCommandRunner> CreateWirelessRunnerAsync(CancellationToken cancellationToken)
     {
-        AndroidResourceValidationResult validation = await AndroidResourceValidator.ValidateAsync(
-            _resourceDirectory, cancellationToken).ConfigureAwait(false);
-        if (!validation.Succeeded)
-        {
-            throw new AndroidConnectionException(validation.ReasonCode, validation.Message);
-        }
+        await _runtimeFiles.ResolveAsync(cancellationToken).ConfigureAwait(false);
         // A pairing client may start the shared daemon. Cancelling this request
         // must not kill that daemon and tear down unrelated USB/media sessions.
-        return new AdbCommandRunner(validation.ExecutablePath, killProcessTree: false);
+        return CreateCommandRunner();
     }
 
     public async ValueTask<AndroidOperationResult> ExecuteWirelessAsync(
@@ -333,6 +332,7 @@ internal sealed partial class AndroidConnectionService : IAndroidConnectionServi
             AndroidReasonCodes.Stopped,
             "手机连接服务已停止");
         _stopSource.Dispose();
+        _runtimeFiles.Dispose();
         _wirelessOperationGate.Dispose();
         _operationGate.Dispose();
     }
@@ -401,36 +401,20 @@ internal sealed partial class AndroidConnectionService : IAndroidConnectionServi
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_disposed) { return; }
+            if (_disposed || _componentRecoveryBlocked) { return; }
             cancellationToken.ThrowIfCancellationRequested();
             await InitializeConnectionPreferencesAsync(cancellationToken).ConfigureAwait(false);
             if (_client is null)
             {
-                AndroidResourceValidationResult validation =
-                    await AndroidResourceValidator.ValidateAsync(_resourceDirectory, cancellationToken)
-                        .ConfigureAwait(false);
+                await _runtimeFiles.ResolveAsync(cancellationToken).ConfigureAwait(false);
                 WriteLog(
                     "resource_validation",
-                    validation.ReasonCode,
-                    validation.Message,
-                    state: validation.Succeeded
-                        ? AndroidConnectionState.Discovering
-                        : AndroidConnectionState.Faulted);
-                if (!validation.Succeeded)
-                {
-                    MarkTransportUnavailable();
-                    Publish(
-                        AndroidConnectionState.Faulted,
-                        validation.ReasonCode,
-                        validation.Message,
-                        [],
-                        null,
-                        null);
-                    return;
-                }
+                    AndroidReasonCodes.ResourcesReady,
+                    "手机连接组件校验通过",
+                    state: AndroidConnectionState.Discovering);
 
                 _client = new AdbClient(
-                    new AdbCommandRunner(validation.ExecutablePath),
+                    CreateCommandRunner(),
                     _options.CommandTimeout);
             }
 
@@ -501,13 +485,18 @@ internal sealed partial class AndroidConnectionService : IAndroidConnectionServi
             {
                 _lastScanSignature = scanSignature;
                 _lastScanLogAt = scanTime;
-                WriteLog(
-                    "device_scan",
-                    AndroidReasonCodes.ScanOk,
-                    "手机设备扫描完成",
-                    deviceCount: supportedDevices.Length,
-                    duration: list.Duration,
-                    toolVersion: list.ToolVersion);
+                _log.TryWrite(new(DateTimeOffset.UtcNow, "device_scan", AndroidReasonCodes.ScanOk, "手机设备扫描完成",
+                    DeviceCount: supportedDevices.Length, DurationMilliseconds: (long)list.Duration.TotalMilliseconds, ToolVersion: list.ToolVersion)
+                {
+                    Scan = new(list.Devices.Count, supportedDevices.Length,
+                        supportedDevices.Count(d => d.Transport == AndroidTransport.Usb), supportedDevices.Count(d => d.Transport == AndroidTransport.Network),
+                        supportedDevices.Count(d => d.Status == AndroidDeviceStatus.Ready), supportedDevices.Count(d => d.Status == AndroidDeviceStatus.Unauthorized),
+                        supportedDevices.Count(d => d.Status == AndroidDeviceStatus.Offline), _connectionPreferences.Enabled ? _connectionPreferences.Value.Method.ToString() : "all",
+                        supportedDevices.Count(d => d.Status == AndroidDeviceStatus.Ready && (!_connectionPreferences.Enabled ||
+                            ConnectionPreferencesStore.Supports(_connectionPreferences.Value.Method, d.Transport))), _automaticSelectionSuppressed),
+                    AdbCommand = list.CommandDiagnostic,
+                    AdbServer = list.Server,
+                });
             }
 
             AdbDeviceRecord? selected;
@@ -617,9 +606,12 @@ internal sealed partial class AndroidConnectionService : IAndroidConnectionServi
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (AndroidConnectionException exception)
         {
+            if (exception.ReasonCode.StartsWith("ANDROID_RECOVERY_", StringComparison.Ordinal)) { _componentRecoveryBlocked = true; }
             MarkTransportUnavailable();
             AndroidConnectionState state = Snapshot.IsReady ? AndroidConnectionState.Reconnecting : AndroidConnectionState.Faulted;
-            WriteLog("scan_error", exception.ReasonCode, exception.Message, state: state);
+            _log.TryWrite(new(DateTimeOffset.UtcNow, "scan_error", exception.ReasonCode, exception.Message,
+                State: state, ExceptionType: exception.GetType().FullName)
+            { AdbCommand = exception.CommandDiagnostic });
             PublishFromCurrent(state, exception.ReasonCode, exception.Message);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
@@ -628,7 +620,16 @@ internal sealed partial class AndroidConnectionService : IAndroidConnectionServi
             const string reasonCode = AndroidReasonCodes.ScanUnexpected;
             string message = "手机连接扫描失败，程序将自动重试";
             AndroidConnectionState state = Snapshot.IsReady ? AndroidConnectionState.Reconnecting : AndroidConnectionState.Faulted;
-            WriteLog("scan_error", reasonCode, $"{message} ({exception.GetType().Name})", state: state);
+            _log.TryWrite(new(DateTimeOffset.UtcNow, "scan_error", reasonCode, message, State: state, ExceptionType: exception.GetType().FullName)
+            {
+                AdbCommand = AdbDiagnosticPolicy.Describe(["devices"], "unknown") with
+                {
+                    ExceptionType = exception.GetType().FullName,
+                    HResult = exception.HResult,
+                    NativeErrorCode = exception is System.ComponentModel.Win32Exception native ? native.NativeErrorCode : null,
+                    ErrorCategory = "scan-exception",
+                },
+            });
             PublishFromCurrent(state, reasonCode, message);
         }
         finally { _operationGate.Release(); }

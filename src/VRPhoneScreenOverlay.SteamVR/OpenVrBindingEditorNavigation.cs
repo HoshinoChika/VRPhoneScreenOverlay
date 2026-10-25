@@ -18,7 +18,7 @@ public static class OpenVrBindingEditorNavigation
         {
             await socket.ConnectAsync(new Uri("ws://127.0.0.1:27062/"), deadline.Token).ConfigureAwait(false);
             await NavigateAsync(socket, deadline.Token).ConfigureAwait(false);
-            return new(true, OpenVrReasonCodes.BindingUiOpened, "已请求打开 VRPhoneScreen Overlay 的手柄绑定选择页面");
+            return new(true, OpenVrReasonCodes.BindingUiOpened, "已请求打开 SteamVR 手柄绑定页面");
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (Exception error) when (error is OperationCanceledException or WebSocketException or IOException or InvalidOperationException or System.Text.Json.JsonException)

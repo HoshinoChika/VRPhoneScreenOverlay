@@ -4,9 +4,9 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
-        if (args.Length == 2 && args[0] == "configure-startup" && args[1] is "enabled" or "disabled")
+        if (args.Length == 2 && args[0] == "configure-startup" && args[1] is "enabled" or "disabled" or "preserve")
         {
-            OpenVrBindingResult registration = OpenVrStartupRegistration.ConfigureInUtility(args[1] == "enabled");
+            OpenVrBindingResult registration = OpenVrStartupRegistration.ConfigureInUtility(args[1] == "preserve" ? null : args[1] == "enabled");
             Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(registration));
             return registration.Succeeded ? 0 : 1;
         }

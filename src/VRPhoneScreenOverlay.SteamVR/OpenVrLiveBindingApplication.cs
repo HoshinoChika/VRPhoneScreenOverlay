@@ -1,10 +1,12 @@
 using System.Text;
 using System.Text.Json.Nodes;
+using VRPhoneScreenOverlay.Contracts;
 
 namespace VRPhoneScreenOverlay.SteamVR;
 
 public interface IBindingLiveApplication
 {
+    public BindingSnapshotRetentionDiagnostic? RetentionDiagnostic => null;
     public ValueTask<IBindingLiveTransaction> BeginAsync(CancellationToken cancellationToken);
 }
 
@@ -27,6 +29,8 @@ public sealed class OpenVrLiveBindingApplication : IBindingLiveApplication
     private readonly string _snapshotRoot;
     private readonly Action _acceptPrepared;
     private readonly Action<string>? _acceptRevision;
+    private BindingSnapshotRetentionDiagnostic? _retentionDiagnostic;
+    public BindingSnapshotRetentionDiagnostic? RetentionDiagnostic => Volatile.Read(ref _retentionDiagnostic);
 
     public OpenVrLiveBindingApplication() : this(CreateClient, OpenVrBindingSelectionChannel.ConnectAsync,
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRPhoneScreenOverlay", "steamvr", "applied-bindings"),
@@ -60,10 +64,13 @@ public sealed class OpenVrLiveBindingApplication : IBindingLiveApplication
             }
             if (previous.Count == 0) { throw new InvalidDataException("No binding profile is registered."); }
             channel = await _channels(client, deadline.Token).ConfigureAwait(false);
-            return new Transaction(client, channel, previous, _snapshotRoot, _acceptPrepared, _channels, _acceptRevision);
+            Volatile.Write(ref _retentionDiagnostic, OpenVrBindingSnapshotRetention.Skip("transaction-active"));
+            return new Transaction(client, channel, previous, _snapshotRoot, _acceptPrepared, _channels, _acceptRevision,
+                diagnostic => Volatile.Write(ref _retentionDiagnostic, diagnostic));
         }
-        catch
+        catch (Exception error)
         {
+            Volatile.Write(ref _retentionDiagnostic, OpenVrBindingSnapshotRetention.Skip("selection-capture-failed", error));
             if (channel is not null) { await channel.DisposeAsync().ConfigureAwait(false); }
             client.Dispose();
             throw;
@@ -110,7 +117,8 @@ public sealed class OpenVrLiveBindingApplication : IBindingLiveApplication
 
     private sealed class Transaction(HttpClient client, IOpenVrBindingSelectionChannel channel,
         Dictionary<string, string> previous, string snapshotRoot, Action acceptPrepared,
-        Func<HttpClient, CancellationToken, ValueTask<IOpenVrBindingSelectionChannel>> channels, Action<string>? acceptRevision) : IBindingLiveTransaction
+        Func<HttpClient, CancellationToken, ValueTask<IOpenVrBindingSelectionChannel>> channels, Action<string>? acceptRevision,
+        Action<BindingSnapshotRetentionDiagnostic> reportRetention) : IBindingLiveTransaction
     {
         public IReadOnlyList<string> ControllerTypes => previous.Keys.ToArray();
         private IOpenVrBindingSelectionChannel _channel = channel;
@@ -119,6 +127,7 @@ public sealed class OpenVrLiveBindingApplication : IBindingLiveApplication
         private bool _committed;
         private bool _disposed;
         private bool _inputSuspended;
+        private IReadOnlyList<string>? _confirmedReferences;
 
         public ValueTask ApplyAsync(IReadOnlyDictionary<string, string> runtimeBindings, CancellationToken cancellationToken)
             => ApplyCoreAsync(runtimeBindings, requireAll: true, cancellationToken);
@@ -149,6 +158,8 @@ public sealed class OpenVrLiveBindingApplication : IBindingLiveApplication
                 if (new FileInfo(path).Length > 1_048_576) { throw new InvalidDataException("Default binding is too large."); }
                 JsonObject expected = JsonNode.Parse(await File.ReadAllTextAsync(path, deadline.Token).ConfigureAwait(false)) as JsonObject
                     ?? throw new InvalidDataException("Invalid prepared binding.");
+                if (expected["app_key"]?.GetValue<string>() != OpenVrInputManifest.ApplicationKey || expected["controller_type"]?.GetValue<string>() != type)
+                { throw new InvalidDataException("Prepared binding ownership does not match the requested controller."); }
                 string target = Path.Combine(_directory, type + ".json");
                 await File.WriteAllTextAsync(target, expected.ToJsonString(), new UTF8Encoding(false), deadline.Token).ConfigureAwait(false);
                 string uri = new Uri(target).AbsoluteUri;
@@ -173,10 +184,24 @@ public sealed class OpenVrLiveBindingApplication : IBindingLiveApplication
                 JsonObject actions = await ReadActionsAsync(client, deadline.Token).ConfigureAwait(false);
                 if (requested.All(selection => SameSelection(actions["current_binding_url"]?[selection.Key]?.GetValue<string>(), selection.Value)))
                 {
+                    _confirmedReferences = ReadReferences(actions);
                     return;
                 }
                 await Task.Delay(100, deadline.Token).ConfigureAwait(false);
             }
+        }
+
+        private static List<string>? ReadReferences(JsonObject actions)
+        {
+            if (actions["current_binding_url"] is not JsonObject current || actions["default_bindings"] is not JsonObject defaults || current.Count + defaults.Count > 128) { return null; }
+            List<string> references = [];
+            foreach ((string _, JsonNode? value) in current.Concat(defaults))
+            {
+                if (value is null) { continue; }
+                if (value is not JsonValue scalar || !scalar.TryGetValue(out string? uri)) { return null; }
+                if (!string.IsNullOrEmpty(uri)) { references.Add(uri); }
+            }
+            return references;
         }
 
         private static bool SameSelection(string? actual, string expected) => actual == expected ||
@@ -229,9 +254,21 @@ public sealed class OpenVrLiveBindingApplication : IBindingLiveApplication
                     { errors.Add(error); }
                     if (errors.Count > 0) { throw new AggregateException("Binding selection rollback failed.", errors); }
                 }
-                if (!_committed) { DeleteSnapshot(_directory); }
-                else { PruneSnapshots(); }
+                if (!_committed)
+                {
+                    HashSet<string> retained = new(StringComparer.OrdinalIgnoreCase);
+                    if (_selected.Count == 0 || OpenVrBindingSnapshotRetention.TryProtect(snapshotRoot, _confirmedReferences, retained, out _))
+                    {
+                        if (!retained.Contains(Path.GetFullPath(_directory)))
+                        { DeleteSnapshot(_directory); reportRetention(OpenVrBindingSnapshotRetention.Skip("rollback-snapshot-removed")); }
+                        else { reportRetention(OpenVrBindingSnapshotRetention.Skip("rollback-reference-retained")); }
+                    }
+                    else { reportRetention(OpenVrBindingSnapshotRetention.Skip("rollback-references-unavailable")); }
+                }
+                else { reportRetention(OpenVrBindingSnapshotRetention.Prune(snapshotRoot, _directory, _confirmedReferences)); }
             }
+            catch (Exception error)
+            { reportRetention(OpenVrBindingSnapshotRetention.Skip("rollback-or-cleanup-failed", error)); throw; }
             finally
             {
                 try { await _channel.DisposeAsync().ConfigureAwait(false); }
@@ -243,27 +280,15 @@ public sealed class OpenVrLiveBindingApplication : IBindingLiveApplication
             }
         }
 
-        private void PruneSnapshots()
-        {
-            // Keep current and one previous snapshot, with a bounded directory
-            // scan. Cleanup never determines whether application succeeded.
-            try
-            {
-                string? priorDirectory = previous.Values.Where(uri => Uri.TryCreate(uri, UriKind.Absolute, out Uri? value) && value.IsFile)
-                    .Select(uri => Path.GetDirectoryName(new Uri(uri).LocalPath)).FirstOrDefault(path => path is not null && Path.GetDirectoryName(path) == snapshotRoot);
-                foreach (string directory in Directory.EnumerateDirectories(snapshotRoot).Take(128))
-                {
-                    if (directory != _directory && directory != priorDirectory) { DeleteSnapshot(directory); }
-                }
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
-        }
-
         private static void DeleteSnapshot(string directory)
         {
+            AssertSafeSnapshotPath(directory);
             if (!Directory.Exists(directory) || !Guid.TryParseExact(Path.GetFileName(directory), "N", out _) ||
                 (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) { return; }
-            foreach (string file in Directory.EnumerateFiles(directory, "*.json").Take(32)) { File.Delete(file); }
+            string[] entries = Directory.EnumerateFileSystemEntries(directory).Take(33).ToArray();
+            if (entries.Length > 32 || entries.Any(file => (File.GetAttributes(file) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0 ||
+                !string.Equals(Path.GetExtension(file), ".json", StringComparison.OrdinalIgnoreCase))) { return; }
+            foreach (string file in entries) { File.Delete(file); }
             Directory.Delete(directory, recursive: false);
         }
 

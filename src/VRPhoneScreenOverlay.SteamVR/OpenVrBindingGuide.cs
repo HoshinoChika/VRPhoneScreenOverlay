@@ -156,7 +156,7 @@ public static class OpenVrBindingGuide
         "phonerecents" => "最近任务",
         "phonecontrolpanel" => "控制栏",
         "phonescreenshot" => "截屏",
-        "recallmenu" => "隐藏后唤回",
+        "recallmenu" => "唤回手机",
         "phoneoverlaygrab" => "抓握",
         "phoneoverlayscale" => "缩放 / 滚动",
         "phoneoverlaytouch" => "触屏点击",

@@ -24,6 +24,6 @@ internal static class UiHelpContent
     public const string CurrentDevices = "当前连接方式下能识别到的设备。已连接的设备排在首位，并显示绿色边框。点击设备可管理或连接。";
     public const string HistoryDevices = "曾通过当前所选方式连接成功、现在此方式未被识别到的设备。USB 与无线分别管理；点击可修改配置或忘记此方式的历史。";
     public const string Update = "检查是否有新版，查看更新内容后可自行选择是否更新。";
-    public const string Diagnostics = "提交问题描述和运行情况，帮助开发者排查故障。";
+    public const string Diagnostics = "上传最近 6 小时的运行日志和诊断资料。本地保留最近 24 小时；点击“打开软件日志”生成本地诊断包并打开资料文件夹。";
     public const string Bindings = "选择用哪只手操作手机浮窗，按键可在“手柄绑定”中调整。";
 }

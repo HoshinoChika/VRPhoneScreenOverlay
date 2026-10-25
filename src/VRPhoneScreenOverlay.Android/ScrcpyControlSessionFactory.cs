@@ -29,6 +29,10 @@ internal sealed class ScrcpyControlSessionFactory(
                 deadline,
                 cancellationToken)
             .ConfigureAwait(false);
+        AdbCommandResult rotation = await _launcher.RunDeviceCommandAsync(device, ["shell", "dumpsys", "-t", "1", "display"],
+            TimeSpan.FromSeconds(1), deadline, "ANDROID_CONTROL_ROTATION_TIMEOUT", "手机旋转信息未能读取", cancellationToken).ConfigureAwait(false);
+        (int? rotationValue, string rotationStatus) = rotation.Succeeded ? AndroidDisplayRotation.Parse(rotation.StandardOutput) : (null, "command-failed");
+        displaySize = displaySize with { Rotation = rotationValue, RotationStatus = rotationStatus };
         ScrcpyTransportLease transport = await _launcher.LaunchAsync(
                 new ScrcpySessionLaunchRequest(
                     device,

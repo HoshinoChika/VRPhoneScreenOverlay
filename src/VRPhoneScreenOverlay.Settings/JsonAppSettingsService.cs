@@ -19,6 +19,7 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
         "设置服务尚未初始化",
         false);
     private bool _disposed;
+    private bool _startupPreferenceKnown = true;
     private readonly object _lifetimeGate = new();
     private int _activeOperations;
     private TaskCompletionSource? _idle;
@@ -64,7 +65,7 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
             string reasonCode;
             string message;
             bool requiresSave;
-            if (!File.Exists(_settingsPath))
+            if (!SettingsFileExistsOrIsUnavailable(_settingsPath))
             {
                 ControllerHandPreference migratedHand = await ReadLegacyHandAsync(cancellationToken)
                     .ConfigureAwait(false);
@@ -88,6 +89,7 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
                         json,
                         _jsonOptions) ?? throw new JsonException("Settings document was empty.");
                     AppSettings loaded = document.ToSettings(out bool documentRepaired);
+                    _startupPreferenceKnown = document.LaunchWithSteamVr.HasValue;
                     settings = AppSettingsPolicy.Normalize(loaded);
                     requiresSave = documentRepaired || settings != loaded;
                     reasonCode = requiresSave ? SettingsReasonCodes.ValuesRepaired : SettingsReasonCodes.Loaded;
@@ -100,13 +102,14 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
                         InvalidOperationException or FormatException)
                 {
                     settings = AppSettings.Default;
-                    requiresSave = true;
+                    _startupPreferenceKnown = false;
+                    requiresSave = false;
                     reasonCode = SettingsReasonCodes.CorruptDefaulted;
-                    message = "设置文件损坏，已使用安全默认值";
+                    message = "设置读取失败，本次使用安全默认值；SteamVR 启动偏好保持不变，请重新设置";
                 }
             }
 
-            bool persisted = true;
+            bool persisted = reasonCode != SettingsReasonCodes.CorruptDefaulted;
             if (requiresSave)
             {
                 try
@@ -117,6 +120,7 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
                     exception is IOException or UnauthorizedAccessException)
                 {
                     persisted = false;
+                    _startupPreferenceKnown = false;
                     reasonCode = SettingsReasonCodes.SaveUnavailable;
                     message = "设置目录不可写，本次运行将使用安全设置";
                 }
@@ -138,7 +142,9 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await WriteAtomicAsync(normalized, cancellationToken).ConfigureAwait(false);
+            bool startupKnown = _startupPreferenceKnown || normalized.LaunchWithSteamVr != Snapshot.Value.LaunchWithSteamVr;
+            await WriteAtomicAsync(normalized, cancellationToken, startupKnown).ConfigureAwait(false);
+            _startupPreferenceKnown = startupKnown;
             Publish(new AppSettingsSnapshot(
                 normalized,
                 SettingsReasonCodes.Saved,
@@ -151,6 +157,13 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
         }
     }
 
+    private static bool SettingsFileExistsOrIsUnavailable(string path)
+    {
+        try { _ = File.GetAttributes(path); return true; }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return false; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return true; }
+    }
+
     public async ValueTask SaveNonMotionAsync(AppSettings settings, CancellationToken cancellationToken)
     {
         using OperationLease operation = EnterOperation();
@@ -159,7 +172,9 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
         try
         {
             AppSettings value = AppSettingsPolicy.Normalize(MotionPreferences.From(Snapshot.Value).Apply(settings));
-            await WriteAtomicAsync(value, cancellationToken).ConfigureAwait(false);
+            bool startupKnown = _startupPreferenceKnown || value.LaunchWithSteamVr != Snapshot.Value.LaunchWithSteamVr;
+            await WriteAtomicAsync(value, cancellationToken, startupKnown).ConfigureAwait(false);
+            _startupPreferenceKnown = startupKnown;
             Publish(new(value, SettingsReasonCodes.Saved, "设置已安全保存", true));
         }
         finally { _gate.Release(); }
@@ -195,6 +210,34 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
             AppSettings value = Snapshot.Value with { AutoTurnOffPhoneScreen = !Snapshot.Value.AutoTurnOffPhoneScreen };
             await WriteAtomicAsync(value, cancellationToken).ConfigureAwait(false);
             Publish(new(value, SettingsReasonCodes.Saved, "设置已安全保存", true));
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async ValueTask<AppSettings> RestoreChoicesAsync(AppSettings attempted, AppSettings previous, CancellationToken token)
+    {
+        using OperationLease operation = EnterOperation();
+        await _gate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            AppSettings restored = AppSettingsPolicy.Normalize(SettingsChoiceRollback.Restore(Snapshot.Value, attempted, previous));
+            if (restored == Snapshot.Value) { return restored; }
+            await WriteAtomicAsync(restored, token).ConfigureAwait(false);
+            Publish(new(restored, SettingsReasonCodes.FieldsRestored, "已恢复本次修改的设置字段", true));
+            return restored;
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async ValueTask SaveVideoAsync(VideoParameters video, CancellationToken token)
+    {
+        using OperationLease operation = EnterOperation();
+        await _gate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            AppSettings value = AppSettingsPolicy.Normalize(video.Apply(Snapshot.Value));
+            await WriteAtomicAsync(value, token).ConfigureAwait(false);
+            Publish(new(value, SettingsReasonCodes.VideoSaved, "画面参数已保存", true));
         }
         finally { _gate.Release(); }
     }
@@ -243,7 +286,7 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
 
     private async ValueTask WriteAtomicAsync(
         AppSettings settings,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool? startupKnown = null)
     {
         string? directory = Path.GetDirectoryName(_settingsPath);
         if (string.IsNullOrWhiteSpace(directory))
@@ -258,7 +301,7 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
         try
         {
             byte[] content = JsonSerializer.SerializeToUtf8Bytes(
-                SettingsDocument.FromSettings(settings),
+                SettingsDocument.FromSettings(settings, startupKnown ?? _startupPreferenceKnown),
                 _jsonOptions);
             await using (FileStream stream = new(
                 temporaryPath,
@@ -342,6 +385,7 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
 
     private void Publish(AppSettingsSnapshot snapshot)
     {
+        snapshot = snapshot with { StartupPreferenceKnown = _startupPreferenceKnown };
         lock (_snapshotGate)
         {
             _snapshot = snapshot;
@@ -361,7 +405,7 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
         bool VrUnlockKeypadEnabled = false,
         bool AutoOpenPhoneOverlay = false,
         bool AutoTurnOffPhoneScreen = false,
-        bool LaunchWithSteamVr = false,
+        bool? LaunchWithSteamVr = null,
         bool MinimizeAfterOverlayOpened = false,
         float PlayspaceFlingStrength = 1,
         float PlayspaceGravity = 9.8f,
@@ -389,12 +433,12 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
                 VrUnlockKeypadEnabled,
                 AutoOpenPhoneOverlay,
                 AutoTurnOffPhoneScreen,
-                LaunchWithSteamVr,
+                LaunchWithSteamVr ?? false,
                 MinimizeAfterOverlayOpened,
                 PlayspaceFlingStrength, PlayspaceGravity, PlayspaceFriction, PlayspaceResetAllOffsets, PicoMicrophoneKeeperEnabled, PlayspaceMultiplier, PlayspaceInertiaEnabled);
         }
 
-        public static SettingsDocument FromSettings(AppSettings settings) => new(
+        public static SettingsDocument FromSettings(AppSettings settings, bool startupKnown) => new(
             settings.SchemaVersion,
             settings.ControllerHand.ToString(),
             settings.VideoResolutionPercent,
@@ -405,7 +449,7 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
             settings.VrUnlockKeypadEnabled,
             settings.AutoOpenPhoneOverlay,
             settings.AutoTurnOffPhoneScreen,
-            settings.LaunchWithSteamVr,
+            startupKnown ? settings.LaunchWithSteamVr : null,
             settings.MinimizeAfterOverlayOpened,
             settings.PlayspaceFlingStrength, settings.PlayspaceGravity,
             settings.PlayspaceFriction, settings.PlayspaceResetAllOffsets, settings.PicoMicrophoneKeeperEnabled, settings.PlayspaceMultiplier, settings.PlayspaceInertiaEnabled);

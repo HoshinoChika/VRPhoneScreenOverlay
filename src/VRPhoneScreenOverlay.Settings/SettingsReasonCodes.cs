@@ -33,6 +33,8 @@ public static class SettingsReasonCodes
 
     /// <summary><c>SETTINGS_SAVED</c></summary>
     public const string Saved = "SETTINGS_SAVED";
+    public const string FieldsRestored = "SETTINGS_FIELDS_RESTORED";
+    public const string VideoSaved = "SETTINGS_VIDEO_SAVED";
 
     /// <summary><c>SETTINGS_VALUES_REPAIRED</c></summary>
     public const string ValuesRepaired = "SETTINGS_VALUES_REPAIRED";

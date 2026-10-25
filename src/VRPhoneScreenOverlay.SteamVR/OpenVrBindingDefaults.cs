@@ -32,6 +32,12 @@ public sealed class OpenVrBindingDefaults(string packagedManifest, string savedD
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "steamvr", "input"),
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRPhoneScreenOverlay", "steamvr"), enrichFromDriver: true);
 
+    // Installer health-check startup replaces local defaults without depending
+    // on SteamVR being online. Ordinary preparation activates them when ready.
+    public static OpenVrBindingDefaults CreateForUpdate() => CreateBuiltIn(
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "steamvr", "input"),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRPhoneScreenOverlay", "steamvr"));
+
     internal static OpenVrBindingDefaults CreateBuiltIn(string savedDirectory, string runtimeDirectory, OpenVrControllerHand? preparedHand = null, bool enrichFromDriver = false) =>
         new(Path.Combine(runtimeDirectory, "default-source", "action_manifest.json"), savedDirectory, runtimeDirectory, preparedHand)
         { UseBuiltIn = true, EnrichFromDriver = enrichFromDriver };
@@ -48,7 +54,9 @@ public sealed class OpenVrBindingDefaults(string packagedManifest, string savedD
         cancellationToken.ThrowIfCancellationRequested();
         if (UseBuiltIn) { OpenVrBuiltInBindings.EnsureSourceFiles(Path.GetDirectoryName(packagedManifest)!); }
         string packageRoot = Path.GetDirectoryName(Path.GetFullPath(packagedManifest))!;
-        string savedRoot = Path.GetFullPath(savedDirectory);
+        // Documents and the selected input directory may themselves be legitimate
+        // directory links. Anchor that root once; children still reject all links.
+        string savedRoot = OpenVrBindingDirectoryRoot.Resolve(savedDirectory);
         string runtimeRoot = Path.GetFullPath(runtimeDirectory);
         string cachedRoot = Path.Combine(runtimeRoot, "user-bindings");
         string bindingsRoot = Path.Combine(runtimeRoot, "bindings");
@@ -187,7 +195,10 @@ public sealed class OpenVrBindingDefaults(string packagedManifest, string savedD
     {
         for (string? current = Path.GetFullPath(path); current is not null; current = Path.GetDirectoryName(current))
         {
-            if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(current); }
+            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { continue; }
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
             { throw new InvalidDataException("Binding path contains a reparse point."); }
         }
     }

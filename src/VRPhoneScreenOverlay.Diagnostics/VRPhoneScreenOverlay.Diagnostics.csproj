@@ -1,6 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <EmbeddedResource Include="..\VRPhoneScreenOverlay.Android\Resources\AndroidPlatformTools\manifest.json" LogicalName="FileInspection.Adb" />
+    <EmbeddedResource Include="..\VRPhoneScreenOverlay.Android\Resources\Scrcpy\manifest.json" LogicalName="FileInspection.Scrcpy" />
+    <EmbeddedResource Include="..\VRPhoneScreenOverlay.SteamVR\Resources\OpenVR\manifest.json" LogicalName="FileInspection.OpenVr" />
     <ProjectReference Include="..\VRPhoneScreenOverlay.Contracts\VRPhoneScreenOverlay.Contracts.csproj" />
     <ProjectReference Include="..\VRPhoneScreenOverlay.Protocols\VRPhoneScreenOverlay.Protocols.csproj" />
     <ProjectReference Include="..\VRPhoneScreenOverlay.Network\VRPhoneScreenOverlay.Network.csproj" />

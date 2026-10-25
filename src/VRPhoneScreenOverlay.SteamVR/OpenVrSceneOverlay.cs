@@ -1,4 +1,5 @@
 using Valve.VR;
+using VRPhoneScreenOverlay.Contracts;
 
 namespace VRPhoneScreenOverlay.SteamVR;
 
@@ -21,6 +22,7 @@ public interface IOpenVrSceneOverlay : IDisposable
     public long GraphicsAdapterLuid { get; }
 
     public OpenVrPhoneInteractionSnapshot Interaction { get; }
+    public PhoneInputPathDiagnostic? CaptureInputEvidence() => Interaction.InputPath;
 
     public OpenVrBindingHealthSnapshot BindingHealth { get; }
 
@@ -33,6 +35,7 @@ public interface IOpenVrSceneOverlay : IDisposable
     public void Submit(GpuVideoFrame frame);
     public void SetPhoneLocked(bool? locked);
     public void SetScreenGuard(bool enabled, bool faulted);
+    public void NotifyControlGeometryRevision(long revision) { }
 
     public OpenVrBindingResult OpenBindingUi();
 
@@ -64,7 +67,9 @@ internal sealed class OpenVrSceneOverlay : IOpenVrSceneOverlay
     }
     public void SetScreenGuard(bool enabled, bool faulted)
     {
-        lock (_gate) { _interaction?.SetScreenGuard(enabled, faulted); }
+        // Pure atomic state handoff. Never wait for ApiGate from a control-state
+        // callback: the input thread may be publishing a command in that gate.
+        _interaction?.SetScreenGuard(enabled, faulted);
     }
 
     public void SetPhoneLocked(bool? locked)
@@ -159,11 +164,13 @@ internal sealed class OpenVrSceneOverlay : IOpenVrSceneOverlay
     }
 
     public bool IsVisible => _interaction?.PhonePresented ?? false;
+    public void NotifyControlGeometryRevision(long revision) => _interaction?.NotifyControlGeometryRevision(revision);
 
     public long GraphicsAdapterLuid { get; }
 
     public OpenVrPhoneInteractionSnapshot Interaction =>
         _interaction?.Snapshot ?? OpenVrPhoneInteractionSnapshot.Stopped;
+    public PhoneInputPathDiagnostic? CaptureInputEvidence() => _interaction?.CaptureInputEvidence();
 
     public OpenVrBindingHealthSnapshot BindingHealth =>
         _interaction?.BindingHealth ?? OpenVrBindingHealthSnapshot.Stopped;
@@ -198,6 +205,7 @@ internal sealed class OpenVrSceneOverlay : IOpenVrSceneOverlay
             _interaction!.UpdateFrameGeometry(widthMeters, frame.Width, frame.Height);
             _interaction.PrepareVideoSubmission();
             if (IsVisible) { SubmitRetainedTexture(); }
+            _interaction.ConfirmFrameGeometry();
         }
     }
 

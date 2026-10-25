@@ -116,7 +116,13 @@ internal sealed class ScrcpySessionLauncher
         {
             serverProcess = AdbManagedProcess.Start(
                 _commandRunner.ExecutablePath,
-                EnsurePersistentServerArguments(request.BuildServerArguments(scid)));
+                EnsurePersistentServerArguments(request.BuildServerArguments(scid)),
+                diagnostic => _log.TryWrite(new AndroidConnectionLogEntry(DateTimeOffset.UtcNow,
+                    "scrcpy_server_output", diagnostic.InputPermissionRefusalObserved
+                        ? $"{prefix}_INPUT_PERMISSION_DENIED" : diagnostic.Errors.Any(error => error.Category != "server-warning")
+                        ? $"{prefix}_SERVER_OUTPUT_ERROR" : $"{prefix}_SERVER_OUTPUT",
+                    $"手机{channelName}服务输出摘要；计数为观察到的日志行，不是指令执行回执", request.Device.DeviceKey)
+                { ServerOutput = diagnostic, ServerSessionId = diagnostic.SessionId }));
             tcpClient = await ConnectSocketAsync(
                     localPort,
                     serverProcess,
@@ -325,17 +331,10 @@ internal sealed class ScrcpySessionLauncher
 
             if (serverProcess.HasExited)
             {
-                string outputTail = SanitizeServerOutput(
-                    serverProcess.GetOutputTail(),
-                    device.Serial);
-                if (!string.IsNullOrWhiteSpace(outputTail))
-                {
-                    WriteLog(
-                        "scrcpy_server_exit_diagnostic",
-                        $"{prefix}_SERVER_EXIT_DIAGNOSTIC",
-                        $"手机{channelName}服务启动输出：{outputTail}",
-                        device.DeviceKey);
-                }
+                _log.TryWrite(new AndroidConnectionLogEntry(DateTimeOffset.UtcNow,
+                    "scrcpy_server_exit_diagnostic", $"{prefix}_SERVER_EXIT_DIAGNOSTIC",
+                    $"手机{channelName}服务建立连接前退出，输出类别和采集状态已保留", device.DeviceKey)
+                { ServerOutput = serverProcess.OutputDiagnostic, ServerSessionId = serverProcess.OutputDiagnostic.SessionId });
 
                 throw new AndroidConnectionException(
                     $"{prefix}_SERVER_EXITED",
@@ -403,15 +402,6 @@ internal sealed class ScrcpySessionLauncher
 
             await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
         }
-    }
-
-    internal static string SanitizeServerOutput(string output, string serial)
-    {
-        const int maximumLength = 800;
-        string sanitized = output.Replace(serial, "<device>", StringComparison.Ordinal);
-        return sanitized.Length <= maximumLength
-            ? sanitized
-            : sanitized[^maximumLength..];
     }
 
     private async ValueTask RemoveForwardAsync(

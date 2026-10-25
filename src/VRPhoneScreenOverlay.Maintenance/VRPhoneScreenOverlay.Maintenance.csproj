@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\VRPhoneScreenOverlay.Contracts\VRPhoneScreenOverlay.Contracts.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Diagnostics\VRPhoneScreenOverlay.Diagnostics.csproj" />
+    <ProjectReference Include="..\VRPhoneScreenOverlay.Update\VRPhoneScreenOverlay.Update.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -21,6 +21,10 @@ public sealed record PhoneMediaSessionSnapshot(
     string ReasonCode,
     string Message);
 
+public sealed record PhoneStartupDiagnostic(bool DeviceReady, bool SteamVrReady, bool CanStart,
+    bool AutoOpenEnabled, bool AutoStartSuppressed, int AutoStartAttempts, bool AutomaticVideoAllowed,
+    PhoneMediaSessionState MediaState, string MediaReason);
+
 public sealed class PhoneMediaSessionChangedEventArgs(PhoneMediaSessionSnapshot snapshot) : EventArgs
 {
     public PhoneMediaSessionSnapshot Snapshot { get; } = snapshot;
@@ -30,6 +34,7 @@ public interface IPhoneMediaSessionCoordinator : IAsyncDisposable
 {
     public bool CanStart(string? deviceKey);
     public PhoneMediaSessionSnapshot Snapshot { get; }
+    public PhoneStartupDiagnostic? StartupDiagnostic => null;
 
     public event EventHandler<PhoneMediaSessionChangedEventArgs>? StateChanged;
 
@@ -49,6 +54,9 @@ public interface IPhoneMediaSessionCoordinator : IAsyncDisposable
         CancellationToken cancellationToken);
 
     public ValueTask StopAsync(CancellationToken cancellationToken);
+
+    public ValueTask<bool> TryRestartScreenAsync(string deviceKey, AndroidVideoOptions options,
+        Func<bool> stillCurrent, CancellationToken cancellationToken, AndroidVideoOptions? failureOptions = null) => ValueTask.FromResult(false);
 
     public ValueTask StopForConnectionChangeAsync(CancellationToken cancellationToken) => StopAsync(cancellationToken);
 
@@ -87,6 +95,7 @@ public sealed class PhoneMediaSessionCoordinator : IPhoneMediaSessionCoordinator
     private bool _autoStartEnabled;
     private AndroidVideoOptions _autoStartOptions = new();
     private readonly Func<string?, bool> _startReady;
+    private readonly Func<AndroidVideoOptions, bool> _automaticVideoAllowed;
     private CancellationTokenSource? _autoStartAttempt;
 
     public PhoneMediaSessionCoordinator(
@@ -96,7 +105,7 @@ public sealed class PhoneMediaSessionCoordinator : IPhoneMediaSessionCoordinator
         IAndroidMediaPlaybackControl androidMediaPlayback,
         IAndroidConnectionService? phoneConnection = null,
         Func<bool>? runtimeReady = null,
-        Func<string?, bool>? startReady = null)
+        Func<string?, bool>? startReady = null, Func<AndroidVideoOptions, bool>? automaticVideoAllowed = null)
     {
         _phoneOverlay = phoneOverlay ?? throw new ArgumentNullException(nameof(phoneOverlay));
         _phoneAudio = phoneAudio ?? throw new ArgumentNullException(nameof(phoneAudio));
@@ -105,6 +114,7 @@ public sealed class PhoneMediaSessionCoordinator : IPhoneMediaSessionCoordinator
             throw new ArgumentNullException(nameof(androidMediaPlayback));
         _phoneConnection = phoneConnection;
         _runtimeReady = runtimeReady ?? (() => false);
+        _automaticVideoAllowed = automaticVideoAllowed ?? (_ => true);
         _startReady = startReady ?? (deviceKey => PhoneStartReadiness.CanStart(
             _phoneConnection?.Snapshot, _runtimeReady(), deviceKey));
         if (_phoneConnection is not null)
@@ -129,6 +139,20 @@ public sealed class PhoneMediaSessionCoordinator : IPhoneMediaSessionCoordinator
     public event EventHandler<PhoneMediaSessionChangedEventArgs>? StateChanged;
 
     public bool CanStart(string? deviceKey) => !_disposed && !_disposeLifetime.IsCancellationRequested && _startReady(deviceKey);
+
+    public PhoneStartupDiagnostic StartupDiagnostic
+    {
+        get
+        {
+            AndroidConnectionSnapshot? connection = _phoneConnection?.Snapshot;
+            lock (_stateGate)
+            {
+                return new(connection?.IsReady == true, _runtimeReady(), CanStart(connection?.SelectedDevice?.DeviceKey),
+                    _autoStartEnabled, _autoStart.Suppressed, _autoStart.Attempts, _automaticVideoAllowed(_autoStartOptions),
+                    _snapshot.State, _snapshot.ReasonCode);
+            }
+        }
+    }
 
     private void EnsureCanStart(string? deviceKey)
     {
@@ -178,6 +202,7 @@ public sealed class PhoneMediaSessionCoordinator : IPhoneMediaSessionCoordinator
                     lock (_stateGate)
                     {
                         if (!_autoStartEnabled || _snapshot.State is not (PhoneMediaSessionState.Stopped or PhoneMediaSessionState.Faulted)) { continue; }
+                        if (!_automaticVideoAllowed(_autoStartOptions)) { continue; }
                         if (!_autoStart.TryBegin(_autoStartEnabled, connection?.IsReady == true,
                             CanStart(connection?.SelectedDevice?.DeviceKey), true))
                         {
@@ -291,6 +316,20 @@ public sealed class PhoneMediaSessionCoordinator : IPhoneMediaSessionCoordinator
         Func<CancellationToken, ValueTask>? whilePaused,
         CancellationToken cancellationToken)
     {
+        await RestartScreenCoreAsync(deviceKey, videoOptions, whilePaused, null, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask<bool> TryRestartScreenAsync(string deviceKey, AndroidVideoOptions options,
+        Func<bool> stillCurrent, CancellationToken cancellationToken, AndroidVideoOptions? failureOptions = null)
+    {
+        ArgumentNullException.ThrowIfNull(stillCurrent);
+        return RestartScreenCoreAsync(deviceKey, options, null, stillCurrent, failureOptions, cancellationToken);
+    }
+
+    private async ValueTask<bool> RestartScreenCoreAsync(string? deviceKey, AndroidVideoOptions videoOptions,
+        Func<CancellationToken, ValueTask>? whilePaused, Func<bool>? stillCurrent, AndroidVideoOptions? failureOptions,
+        CancellationToken cancellationToken)
+    {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(videoOptions);
         EnsureCanStart(deviceKey);
@@ -299,6 +338,7 @@ public sealed class PhoneMediaSessionCoordinator : IPhoneMediaSessionCoordinator
         bool changingDevice = false;
         try
         {
+            if (stillCurrent is not null && !stillCurrent()) { return false; }
             SetDesiredRunning(deviceKey, videoOptions);
             changingDevice = _activeDeviceKey is not null &&
                 !string.Equals(_activeDeviceKey, deviceKey, StringComparison.Ordinal);
@@ -344,6 +384,7 @@ public sealed class PhoneMediaSessionCoordinator : IPhoneMediaSessionCoordinator
             _activeDeviceKey = deviceKey;
             _sessionActive = true;
             PublishRunning();
+            return true;
         }
         catch (Exception)
         {
@@ -372,6 +413,9 @@ public sealed class PhoneMediaSessionCoordinator : IPhoneMediaSessionCoordinator
                     ClearDesiredRunning();
                 }
 
+                // A failed temporary override must not become the target of a later automatic reconnect.
+                if (failureOptions is not null && !cancellationToken.IsCancellationRequested)
+                { SetDesiredRunning(deviceKey, failureOptions); }
                 Publish(new PhoneMediaSessionSnapshot(
                     PhoneMediaSessionState.Faulted,
                     PhoneReasonCodes.MediaScreenRestartFailed,
@@ -750,6 +794,13 @@ public sealed class PhoneMediaSessionCoordinator : IPhoneMediaSessionCoordinator
                         }
 
                         await WaitForStartReadyAsync(deviceKey, cancellationToken).ConfigureAwait(false);
+                        if (!_automaticVideoAllowed(videoOptions))
+                        {
+                            ClearDesiredRunning();
+                            await StopOwnedChannelsAsync(CancellationToken.None).ConfigureAwait(false);
+                            Publish(new(PhoneMediaSessionState.Faulted, "PHONE_MEDIA_VIDEO_RECOVERY_BLOCKED", "画面参数需要确认，自动恢复已暂停；请在画面页处理后手动打开"));
+                            return;
+                        }
                         Publish(new PhoneMediaSessionSnapshot(
                             PhoneMediaSessionState.Starting,
                             PhoneReasonCodes.MediaReconnecting,

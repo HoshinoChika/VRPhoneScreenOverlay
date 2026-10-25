@@ -5,6 +5,8 @@ namespace VRPhoneScreenOverlay.Android;
 
 internal readonly record struct AndroidDisplaySize(int Width, int Height)
 {
+    public int? Rotation { get; init; }
+    public string RotationStatus { get; init; } = "not-observed";
     public static bool TryParseWmSize(string output, out AndroidDisplaySize size)
     {
         size = default;

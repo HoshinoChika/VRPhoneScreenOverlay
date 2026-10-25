@@ -1,7 +1,8 @@
-using System.Buffers;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using SharpGen.Runtime;
 using Vortice.MediaFoundation;
+using VRPhoneScreenOverlay.Contracts;
 using static Vortice.MediaFoundation.MediaFactory;
 
 namespace VRPhoneScreenOverlay.Media;
@@ -18,15 +19,37 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
     private int _width;
     private int _height;
     private int _stride;
+    private int _inputAlignmentMask = 15;
+    private int _inputMinimumBytes;
     private bool _prependConfiguration = true;
     private bool _mediaFoundationStarted;
-    private bool _disposed;
+    private volatile bool _disposed;
+    private readonly object _nativeGate = new();
+    private bool _asynchronous;
+    private readonly MftAsyncFlow? _asyncFlow;
+    private readonly IMFMediaEventGenerator? _events;
+    private readonly MftEventPump? _eventPump;
+    // Capacity one, replace oldest decoded output; producer owns until TakeOutput.
+    private DecodedVideoFrame? _pendingOutput;
+    private long _replacedOutput;
+    private long _outputEvents;
+    private long _outputSequence;
+    private int _consecutiveFormatChanges;
+    private int _finalResourcesReleased;
+    private int _nativeShutdownCompleted;
+    private Exception? _eventCleanupFailure;
+
+    public event EventHandler? OutputAvailable;
+    public long ReplacedOutputFrames => Interlocked.Read(ref _replacedOutput);
+    public string DiagnosticState => $"async={_asynchronous}; inputEvents={_asyncFlow?.InputEvents ?? 0}; inputConsumed={_asyncFlow?.InputConsumed ?? 0}; outputEvents={Interlocked.Read(ref _outputEvents)}; replaced={ReplacedOutputFrames}";
 
     public MediaFoundationH264Decoder(
         int width,
         int height,
         int framesPerSecond,
-        ReadOnlySpan<byte> codecConfiguration)
+        ReadOnlySpan<byte> codecConfiguration,
+        Action<DecoderInitializationEvent>? observe = null,
+        VideoDecoderPreference preference = VideoDecoderPreference.Automatic)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(width, 16_384);
@@ -34,6 +57,7 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         ArgumentOutOfRangeException.ThrowIfGreaterThan(height, 16_384);
         ArgumentOutOfRangeException.ThrowIfLessThan(framesPerSecond, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(framesPerSecond, 120);
+        if (!Enum.IsDefined(preference)) { throw new ArgumentOutOfRangeException(nameof(preference)); }
         if (codecConfiguration.IsEmpty)
         {
             throw new ArgumentException("H.264 codec configuration must not be empty.", nameof(codecConfiguration));
@@ -56,42 +80,155 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         {
             MFStartup().CheckError();
             _mediaFoundationStarted = true;
-            (IMFTransform Transform, string Name)? hardware = TryCreateHardwareDecoder();
-            if (hardware is not null)
+            (_transform, BackendName) = DecoderCandidateSelection.Select(
+                () => TryCreateHardwareDecoder(observe),
+                () => CreateSoftwareDecoder(observe),
+                candidate =>
+                {
+                    // A rejected candidate may have selected padded output geometry.
+                    _width = width; _height = height; _stride = width;
+                    ConfigureTransform(candidate, observe);
+                }, observe, ReleaseTransform, preference == VideoDecoderPreference.Software);
+            if (_asynchronous)
             {
-                _transform = hardware.Value.Transform;
-                BackendName = hardware.Value.Name;
-                try
-                {
-                    ConfigureTransform();
-                    return;
-                }
-                catch (Exception exception) when (
-                    exception is SharpGenException or COMException or MediaDecoderException)
-                {
-                    _transform.Dispose();
-                }
+                _asyncFlow = new();
+                _events = _transform.QueryInterface<IMFMediaEventGenerator>();
+                _eventPump = new MftEventPump(ReadEvent, _asyncFlow, _nativeGate, ReceiveNotifiedOutput,
+                    NotifyOutput, OnEventFailure, OnEventThreadFinished);
             }
-
-            (_transform, BackendName) = CreateSoftwareDecoder();
-            ConfigureTransform();
         }
-        catch (Exception exception) when (exception is SharpGenException or COMException)
+        catch (Exception primary)
         {
-            Dispose();
-            throw new MediaDecoderException(
-                MediaReasonCodes.H264InitializationFailed,
-                "Windows H.264 解码器初始化失败",
-                exception);
-        }
-        catch
-        {
-            Dispose();
+            try { Dispose(); }
+            catch (Exception cleanup)
+            {
+                throw new MediaDecoderException(MediaReasonCodes.H264InitializationFailed,
+                    "Windows H.264 解码器初始化失败", new AggregateException(primary, cleanup));
+            }
+            if (primary is SharpGenException or COMException)
+            { throw new MediaDecoderException(MediaReasonCodes.H264InitializationFailed, "Windows H.264 解码器初始化失败", primary); }
             throw;
         }
     }
 
     public string BackendName { get; }
+
+    public async ValueTask<DecodedVideoFrame?> DecodePacketAsync(ReadOnlyMemory<byte> payload,
+        long presentationTimeMicroseconds, bool keyFrame, CancellationToken token)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_asynchronous) { return DecodeSynchronous(payload.Span, presentationTimeMicroseconds, keyFrame, token); }
+        if (payload.IsEmpty) { throw new ArgumentException("Empty video packet.", nameof(payload)); }
+        await _asyncFlow!.WaitForInputAsync(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
+        lock (_nativeGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _asyncFlow.ThrowIfFailed();
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                using IMFSample sample = CreateInputSample(payload.Span, presentationTimeMicroseconds, keyFrame);
+                _transform.ProcessInput(_inputStreamId, sample, 0);
+            }
+            catch (Exception error) when (error is SharpGenException or COMException)
+            { throw new MediaDecoderException(MediaReasonCodes.H264DecodeFailed, "异步解码器提交输入失败", error); }
+        }
+        return TakeOutput();
+    }
+
+    public DecodedVideoFrame? TakeOutput()
+    {
+        lock (_nativeGate)
+        {
+            _asyncFlow?.ThrowIfFailed();
+            DecodedVideoFrame? result = _pendingOutput;
+            _pendingOutput = null;
+            return result;
+        }
+    }
+
+    private MftEvent ReadEvent()
+    {
+        using IMFMediaEvent notification = _events!.GetEvent(0);
+        return MftEventPump.Parse(notification);
+    }
+
+    private void ReceiveNotifiedOutput()
+    {
+        Interlocked.Increment(ref _outputEvents);
+        DecodedVideoFrame? decoded = ReadNotifiedOutput();
+        try
+        {
+            if (decoded is null) { return; }
+            if (_pendingOutput is not null) { _pendingOutput.Dispose(); Interlocked.Increment(ref _replacedOutput); }
+            _pendingOutput = decoded;
+            decoded = null;
+        }
+        finally { decoded?.Dispose(); }
+    }
+
+    private void OnEventFailure(Exception error)
+    {
+        if (_disposed) { return; }
+        _asyncFlow!.Fail(error is MediaDecoderException ? error : new MediaDecoderException(
+            "MEDIA_MFT_EVENT_FAILED", "解码器事件处理失败", error));
+        NotifyOutput();
+    }
+
+    private void OnEventThreadFinished()
+    {
+        // The reader may exit immediately after RequestStop, before the owner has
+        // sent native shutdown. Only the owner may release platform state then.
+        if (!_disposed || Volatile.Read(ref _nativeShutdownCompleted) == 0) { return; }
+        try { ReleaseFinalResources(); }
+        catch (Exception error) { _eventCleanupFailure = error; }
+    }
+
+    private void NotifyOutput()
+    {
+        try { OutputAvailable?.Invoke(this, EventArgs.Empty); }
+        catch (Exception error) { _asyncFlow!.Fail(new MediaDecoderException("MEDIA_MFT_OUTPUT_CONSUMER_FAILED", "解码输出接收失败", error)); }
+    }
+
+    private DecodedVideoFrame? ReadNotifiedOutput()
+    {
+        // Exactly one ProcessOutput per native HaveOutput event, including a
+        // format-change result. Renegotiate, then wait for another output event.
+        DecodedVideoFrame? frame = null;
+        try
+        {
+            frame = TryReadOutput(out bool needsInput);
+            if (needsInput)
+            { throw new MediaDecoderException("MEDIA_MFT_OUTPUT_WITHOUT_SAMPLE", "异步解码输出事件未提供有效输出"); }
+            if (frame is null)
+            {
+                if (++_consecutiveFormatChanges > 4)
+                { throw new MediaDecoderException("MEDIA_MFT_FORMAT_CHANGE_LIMIT", "解码器输出格式反复变化"); }
+                return null;
+            }
+            _consecutiveFormatChanges = 0;
+            DecodedVideoFrame result = frame;
+            frame = null;
+            return result;
+        }
+        finally { frame?.Dispose(); }
+    }
+
+    private static void ReleaseTransform(IMFTransform transform)
+    {
+        Exception? failure = null;
+        try
+        {
+            using IMFShutdown? shutdown = transform.QueryInterfaceOrNull<IMFShutdown>();
+            shutdown?.Shutdown();
+        }
+        catch (Exception error) when (error is SharpGenException or COMException) { failure = error; }
+        try { transform.Dispose(); }
+        catch (Exception error) when (error is SharpGenException or COMException)
+        { failure = failure is null ? error : new AggregateException(failure, error); }
+        if (failure is not null)
+        { throw new MediaDecoderException(MediaReasonCodes.H264CleanupFailed, "Windows H.264 解码器释放失败", failure); }
+    }
 
     public DecodedVideoFrame? DecodePacket(
         ReadOnlySpan<byte> annexBPayload,
@@ -99,6 +236,20 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         bool keyFrame)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_asynchronous)
+        {
+            // Compatibility entry point; the production pipeline uses the memory/
+            // ValueTask overload and never copies or blocks a task per video frame.
+            return DecodePacketAsync(annexBPayload.ToArray(), presentationTimeMicroseconds, keyFrame,
+                CancellationToken.None).AsTask().GetAwaiter().GetResult();
+        }
+        return DecodeSynchronous(annexBPayload, presentationTimeMicroseconds, keyFrame, CancellationToken.None);
+    }
+
+    private DecodedVideoFrame? DecodeSynchronous(ReadOnlySpan<byte> annexBPayload,
+        long presentationTimeMicroseconds, bool keyFrame, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
         if (annexBPayload.IsEmpty)
         {
             throw new ArgumentException("H.264 media packet must not be empty.", nameof(annexBPayload));
@@ -106,7 +257,7 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
 
         try
         {
-            DecodedVideoFrame? newestFrame = DrainOutput();
+            DecodedVideoFrame? newestFrame = DrainOutput(token);
             try
             {
                 using IMFSample inputSample = CreateInputSample(
@@ -114,7 +265,7 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
                     presentationTimeMicroseconds,
                     keyFrame);
                 _transform.ProcessInput(_inputStreamId, inputSample, 0);
-                DecodedVideoFrame? decodedAfterInput = DrainOutput();
+                DecodedVideoFrame? decodedAfterInput = DrainOutput(token);
                 if (decodedAfterInput is not null)
                 {
                     newestFrame?.Dispose();
@@ -147,35 +298,78 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         }
 
         _disposed = true;
-        if (_transform is not null)
+        _asyncFlow?.Close();
+        _eventPump?.RequestStop();
+        List<Exception> failures = [];
+        lock (_nativeGate)
         {
-            try
+            _pendingOutput?.Dispose();
+            _pendingOutput = null;
+            if (_transform is not null)
             {
-                _transform.ProcessMessage(TMessageType.MessageNotifyEndOfStream, 0);
-                _transform.ProcessMessage(TMessageType.MessageNotifyEndStreaming, 0);
+                foreach (TMessageType message in new[] { TMessageType.MessageCommandFlush, TMessageType.MessageNotifyEndOfStream, TMessageType.MessageNotifyEndStreaming })
+                {
+                    try { _transform.ProcessMessage(message, 0); }
+                    catch (Exception error) when (error is SharpGenException or COMException) { failures.Add(error); }
+                }
+                try { ReleaseTransform(_transform); }
+                catch (Exception error) when (error is SharpGenException or COMException or MediaDecoderException) { failures.Add(error); }
             }
-            catch (SharpGenException)
-            {
-            }
-
-            _transform.Dispose();
+            Volatile.Write(ref _nativeShutdownCompleted, 1);
         }
+        if (_eventPump is not null && !_eventPump.IsCurrentThread && _eventPump.IsAlive && !_eventPump.Join(TimeSpan.FromSeconds(2)))
+        { failures.Add(new MediaDecoderException("MEDIA_MFT_EVENT_STOP_TIMEOUT", "解码事件线程未及时退出，资源等待该线程结束后释放")); }
+        else if (_eventPump is null || !_eventPump.IsCurrentThread)
+        {
+            try { ReleaseFinalResources(); }
+            catch (Exception error) { failures.Add(error); }
+            if (_eventCleanupFailure is not null) { failures.Add(_eventCleanupFailure); }
+        }
+        if (failures.Count > 0)
+        { throw new MediaDecoderException(MediaReasonCodes.H264CleanupFailed, "Windows H.264 解码器清理未全部完成", new AggregateException(failures)); }
+    }
 
+    private void ReleaseFinalResources()
+    {
+        if (Interlocked.Exchange(ref _finalResourcesReleased, 1) != 0) { return; }
+        _events?.Dispose();
+        _asyncFlow?.Dispose();
         if (_mediaFoundationStarted)
         {
-            MFShutdown();
             _mediaFoundationStarted = false;
+            MFShutdown().CheckError();
         }
+    }
+
+    public async ValueTask<DecodedVideoFrame?> DrainAsync(CancellationToken token)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_asynchronous) { return DrainSynchronous(token); }
+        _asyncFlow!.BeginDrain();
+        lock (_nativeGate)
+        {
+            _transform.ProcessMessage(TMessageType.MessageNotifyEndOfStream, 0);
+            _transform.ProcessMessage(TMessageType.MessageCommandDrain, 0);
+        }
+        await _asyncFlow.WaitForDrainAsync(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
+        return TakeOutput();
     }
 
     public DecodedVideoFrame? Drain()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_asynchronous) { return DrainAsync(CancellationToken.None).AsTask().GetAwaiter().GetResult(); }
+        return DrainSynchronous(CancellationToken.None);
+    }
+
+    private DecodedVideoFrame? DrainSynchronous(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
         try
         {
             _transform.ProcessMessage(TMessageType.MessageNotifyEndOfStream, 0);
             _transform.ProcessMessage(TMessageType.MessageCommandDrain, 0);
-            return DrainOutput();
+            return DrainOutput(token);
         }
         catch (Exception exception) when (exception is SharpGenException or COMException)
         {
@@ -186,7 +380,7 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         }
     }
 
-    private static (IMFTransform Transform, string Name)? TryCreateHardwareDecoder()
+    private static (IMFTransform Transform, string Name)? TryCreateHardwareDecoder(Action<DecoderInitializationEvent>? observe)
     {
         RegisterTypeInfo inputType = new()
         {
@@ -196,10 +390,10 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         return TryActivateDecoder(
             inputType,
             EnumFlag.EnumFlagHardware | EnumFlag.EnumFlagAsyncmft | EnumFlag.EnumFlagSortandfilter,
-            "hardware");
+            "hardware", observe);
     }
 
-    private static (IMFTransform Transform, string Name) CreateSoftwareDecoder()
+    private static (IMFTransform Transform, string Name) CreateSoftwareDecoder(Action<DecoderInitializationEvent>? observe)
     {
         RegisterTypeInfo inputType = new()
         {
@@ -209,7 +403,7 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         (IMFTransform Transform, string Name)? decoder = TryActivateDecoder(
             inputType,
             EnumFlag.EnumFlagSyncmft | EnumFlag.EnumFlagSortandfilter,
-            "software");
+            "software", observe);
         if (decoder is not null)
         {
             return decoder.Value;
@@ -223,7 +417,8 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
     private static (IMFTransform Transform, string Name)? TryActivateDecoder(
         RegisterTypeInfo inputType,
         EnumFlag flags,
-        string kind)
+        string kind,
+        Action<DecoderInitializationEvent>? observe)
     {
         using IMFActivateCollection activations = MFTEnumEx(
             TransformCategoryGuids.VideoDecoder,
@@ -237,6 +432,7 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
                 string name = string.IsNullOrWhiteSpace(activation.FriendlyName)
                     ? "Windows Media Foundation H.264"
                     : activation.FriendlyName;
+                observe?.Invoke(new(kind, "activation-started", name));
                 return (activation.ActivateObject<IMFTransform>(), $"{name} ({kind})");
             }
         }
@@ -244,10 +440,20 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         return null;
     }
 
-    private void ConfigureTransform()
+    private void ConfigureTransform(IMFTransform transform, Action<DecoderInitializationEvent>? observe)
     {
-        using (IMFAttributes attributes = _transform.Attributes)
+        using (IMFAttributes attributes = transform.Attributes)
         {
+            Result asyncAttribute = attributes.GetUInt32(TransformAttributeKeys.TransformAsync, out uint asynchronous);
+            if (asyncAttribute.Failure && asyncAttribute != ResultCode.Attributenotfound) { asyncAttribute.CheckError(); }
+            _asynchronous = asyncAttribute.Success && asynchronous != 0;
+            observe?.Invoke(new("protocol", _asynchronous ? "asynchronous" : "synchronous", null));
+            if (_asynchronous)
+            {
+                attributes.Set(TransformAttributeKeys.TransformAsyncUnlock, 1U).CheckError();
+                using IMFMediaEventGenerator events = transform.QueryInterface<IMFMediaEventGenerator>();
+                using IMFShutdown shutdown = transform.QueryInterface<IMFShutdown>();
+            }
             attributes.Set(SinkWriterAttributeKeys.LowLatency, 1U).CheckError();
         }
 
@@ -270,28 +476,36 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
             checked((uint)_framesPerSecond),
             1).CheckError();
         MFSetAttributeRatio(inputType, MediaTypeAttributeKeys.PixelAspectRatio, 1, 1).CheckError();
-        _transform.SetInputType(_inputStreamId, inputType, 0);
+        transform.SetInputType(_inputStreamId, inputType, 0);
 
-        SelectNv12OutputType();
-        _transform.ProcessMessage(TMessageType.MessageNotifyBeginStreaming, 0);
-        _transform.ProcessMessage(TMessageType.MessageNotifyStartOfStream, 0);
+        SelectNv12OutputType(transform);
+        InputStreamInfo inputInfo = transform.GetInputStreamInfo(_inputStreamId);
+        VideoGeometryDiagnostic inputAllocation = new("decoder-input-type", _width, _height, _visibleWidth,
+            _visibleHeight, 0, inputInfo.Size, Layout: "h264-annex-b", Alignment: inputInfo.Alignment);
+        if (inputInfo.Size is < 0 or > 32 * 1024 * 1024)
+        { throw Nv12Geometry.Failure("MEDIA_MFT_INPUT_ALLOCATION_INVALID", inputAllocation); }
+        _inputMinimumBytes = inputInfo.Size;
+        _inputAlignmentMask = Nv12Geometry.AlignmentMask(inputInfo.Alignment, inputAllocation, "MEDIA_MFT_INPUT_ALIGNMENT_INVALID");
+        transform.ProcessMessage(TMessageType.MessageNotifyBeginStreaming, 0);
+        transform.ProcessMessage(TMessageType.MessageNotifyStartOfStream, 0);
     }
 
-    private void SelectNv12OutputType()
+    private void SelectNv12OutputType(IMFTransform transform)
     {
         for (int index = 0; index < 64; index++)
         {
             IMFMediaType? candidate = null;
             try
             {
-                candidate = _transform.GetOutputAvailableType(_outputStreamId, index);
+                candidate = transform.GetOutputAvailableType(_outputStreamId, index);
                 if (candidate.GetGUID(MediaTypeAttributeKeys.Subtype) != VideoFormatGuids.NV12)
                 {
                     continue;
                 }
 
-                _transform.SetOutputType(_outputStreamId, candidate, 0);
-                UpdateOutputGeometry(candidate);
+                transform.SetOutputType(_outputStreamId, candidate, 0);
+                using IMFMediaType negotiated = transform.GetOutputCurrentType(_outputStreamId);
+                UpdateOutputGeometry(negotiated);
                 return;
             }
             catch (SharpGenException exception) when (
@@ -312,24 +526,27 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
 
     private void UpdateOutputGeometry(IMFMediaType outputType)
     {
-        if (MFGetAttributeSize(
+        long nextWidth = _width;
+        long nextHeight = _height;
+        Result size = MFGetAttributeSize(
                 outputType,
                 MediaTypeAttributeKeys.FrameSize,
                 out uint width,
-                out uint height).Success)
+                out uint height);
+        if (size.Success)
         {
-            _width = checked((int)width);
-            _height = checked((int)height);
+            nextWidth = width;
+            nextHeight = height;
         }
-
-        if (outputType.GetUInt32(MediaTypeAttributeKeys.DefaultStride, out uint rawStride).Success)
-        {
-            _stride = Math.Abs(unchecked((int)rawStride));
-        }
-        else
-        {
-            _stride = _width;
-        }
+        else if (size != ResultCode.Attributenotfound) { size.CheckError(); }
+        Result strideResult = outputType.GetUInt32(MediaTypeAttributeKeys.DefaultStride, out uint rawStride);
+        if (strideResult.Failure && strideResult != ResultCode.Attributenotfound) { strideResult.CheckError(); }
+        long nextStride = strideResult.Success ? unchecked((int)rawStride) : nextWidth;
+        Nv12Geometry.Validate(new("decoder-output-type", nextWidth, nextHeight, _visibleWidth, _visibleHeight,
+            nextStride, 0, Layout: "media-type", DefaultStride: nextStride), requireBytes: false);
+        _width = checked((int)nextWidth);
+        _height = checked((int)nextHeight);
+        _stride = checked((int)nextStride);
     }
 
     private IMFSample CreateInputSample(
@@ -338,12 +555,16 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         bool keyFrame)
     {
         bool prependConfiguration = _prependConfiguration && keyFrame;
-        int totalLength = checked(payload.Length + (prependConfiguration ? _codecConfiguration.Length : 0));
+        long requestedLength = (long)payload.Length + (prependConfiguration ? _codecConfiguration.Length : 0);
+        // Transport payloads are capped at 16 MiB, plus at most 1 MiB configuration.
+        if (requestedLength > 17 * 1024 * 1024)
+        { throw Nv12Geometry.Failure("MEDIA_H264_PACKET_LIMIT", new("decoder-input", _width, _height, _visibleWidth, _visibleHeight, 0, requestedLength, Layout: "h264-annex-b")); }
+        int totalLength = checked((int)requestedLength);
         IMFMediaBuffer? buffer = null;
         IMFSample? sample = null;
         try
         {
-            buffer = MFCreateMemoryBuffer(totalLength);
+            buffer = MFCreateAlignedMemoryBuffer(Math.Max(totalLength, _inputMinimumBytes), _inputAlignmentMask);
             buffer.Lock(out nint data, out _, out _);
             try
             {
@@ -387,13 +608,18 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         }
     }
 
-    private DecodedVideoFrame? DrainOutput()
+    private DecodedVideoFrame? DrainOutput(CancellationToken token)
     {
         DecodedVideoFrame? newestFrame = null;
+        long started = Stopwatch.GetTimestamp();
+        bool exhausted = true;
         try
         {
-            for (int attempt = 0; attempt < 4; attempt++)
+            for (int attempt = 0; attempt < 128; attempt++)
             {
+                token.ThrowIfCancellationRequested();
+                if (Stopwatch.GetElapsedTime(started) > TimeSpan.FromSeconds(2))
+                { throw new MediaDecoderException("MEDIA_MFT_SYNC_OUTPUT_TIMEOUT", "同步解码输出未及时结束"); }
                 DecodedVideoFrame? frame = TryReadOutput(out bool needsMoreInput);
                 if (frame is not null)
                 {
@@ -403,9 +629,11 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
 
                 if (needsMoreInput)
                 {
+                    exhausted = false;
                     break;
                 }
             }
+            if (exhausted) { throw new MediaDecoderException("MEDIA_MFT_SYNC_OUTPUT_LIMIT", "同步解码输出超过单次上限"); }
 
             DecodedVideoFrame? result = newestFrame;
             newestFrame = null;
@@ -430,9 +658,11 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         {
             if (!transformProvidesSamples)
             {
-                int fallbackLength = checked(_stride * _height * 3 / 2);
-                int outputLength = Math.Max(streamInfo.Size, fallbackLength);
-                suppliedBuffer = MFCreateMemoryBuffer(outputLength);
+                VideoGeometryDiagnostic allocation = new("decoder-output-allocation", _width, _height, _visibleWidth,
+                    _visibleHeight, _stride, streamInfo.Size, Layout: "linear", Alignment: streamInfo.Alignment);
+                int required = Nv12Geometry.Validate(allocation, requireBytes: false);
+                (int outputLength, int alignmentMask) = Nv12Geometry.Allocation(required, streamInfo.Size, streamInfo.Alignment, allocation);
+                suppliedBuffer = MFCreateAlignedMemoryBuffer(outputLength, alignmentMask);
                 suppliedSample = MFCreateSample();
                 suppliedSample.AddBuffer(suppliedBuffer);
                 output.Sample = suppliedSample;
@@ -451,7 +681,7 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
 
             if (result == ResultCode.TransformStreamChange)
             {
-                SelectNv12OutputType();
+                SelectNv12OutputType(_transform);
                 return null;
             }
 
@@ -459,7 +689,13 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
             IMFSample decodedSample = output.Sample ?? throw new MediaDecoderException(
                 MediaReasonCodes.H264OutputMissing,
                 "Windows H.264 解码器没有返回视频帧");
-            return CopyDecodedFrame(decodedSample);
+            // Stamp before either TakeOutput or the return-value path can transfer
+            // ownership. Async ProcessOutput is serialized by _nativeGate; the
+            // synchronous decoder has one input owner. PTS need not be monotonic.
+            long sequence = checked(++_outputSequence);
+            DecodedVideoFrame frame = CopyDecodedFrame(decodedSample);
+            frame.OutputSequence = sequence;
+            return frame;
         }
         finally
         {
@@ -475,40 +711,19 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         }
     }
 
-    private unsafe DecodedVideoFrame CopyDecodedFrame(IMFSample sample)
+    private DecodedVideoFrame CopyDecodedFrame(IMFSample sample)
     {
-        using IMFMediaBuffer buffer = sample.ConvertToContiguousBuffer();
-        buffer.Lock(out nint data, out _, out int currentLength);
-        IMemoryOwner<byte>? owner = null;
+        // Preserve a single 2-D buffer's native interface instead of asking it to
+        // manufacture a different contiguous layout before inspecting its pitch.
         try
         {
-            if (currentLength < 1)
-            {
-                throw new MediaDecoderException(
-                    MediaReasonCodes.H264OutputEmpty,
-                    "Windows H.264 解码器返回了空视频帧");
-            }
-
-            owner = MemoryPool<byte>.Shared.Rent(currentLength);
-            new ReadOnlySpan<byte>((void*)data, currentLength).CopyTo(owner.Memory.Span);
-            long presentationTime = sample.SampleTime / 10;
-            DecodedVideoFrame frame = new(
-                _width,
-                _height,
-                _stride,
-                _visibleWidth,
-                _visibleHeight,
-                VideoPixelFormat.Nv12,
-                presentationTime,
-                owner,
-                currentLength);
-            owner = null;
-            return frame;
+            using IMFMediaBuffer buffer = sample.BufferCount == 1 ? sample.GetBufferByIndex(0) : sample.ConvertToContiguousBuffer();
+            return MediaFoundationFrameCopy.Copy(buffer, _width, _height, _stride, _visibleWidth, _visibleHeight, sample.SampleTime / 10);
         }
-        finally
+        catch (Exception error) when (error is SharpGenException or COMException)
         {
-            owner?.Dispose();
-            buffer.Unlock();
+            throw new MediaDecoderException("MEDIA_H264_BUFFER_ACCESS_FAILED", "无法取得解码画面缓冲", error)
+            { Geometry = new("decoder-buffer-access", _width, _height, _visibleWidth, _visibleHeight, 0, 0, Layout: "unavailable", DefaultStride: _stride) };
         }
     }
 }

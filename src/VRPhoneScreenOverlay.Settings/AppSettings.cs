@@ -50,7 +50,10 @@ public sealed record AppSettingsSnapshot(
     AppSettings Value,
     string ReasonCode,
     string Message,
-    bool IsPersisted);
+    bool IsPersisted)
+{
+    public bool StartupPreferenceKnown { get; init; } = true;
+}
 
 public sealed class AppSettingsChangedEventArgs(AppSettingsSnapshot snapshot) : EventArgs
 {
@@ -79,4 +82,13 @@ public interface IAppSettingsService : IDisposable
 
     public ValueTask SaveChoicesAsync(AppSettings choices, CancellationToken cancellationToken) =>
         SaveNonMotionAsync(choices, cancellationToken);
+
+    public async ValueTask<AppSettings> RestoreChoicesAsync(AppSettings attempted, AppSettings previous, CancellationToken token)
+    {
+        AppSettings restored = SettingsChoiceRollback.Restore(Snapshot.Value, attempted, previous);
+        if (restored == Snapshot.Value) { return restored; }
+        await SaveChoicesAsync(restored, token).ConfigureAwait(false);
+        return Snapshot.Value;
+    }
+    public ValueTask SaveVideoAsync(VideoParameters video, CancellationToken token) => SaveChoicesAsync(video.Apply(Snapshot.Value), token);
 }

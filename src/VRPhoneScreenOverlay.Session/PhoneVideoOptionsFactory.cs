@@ -17,6 +17,7 @@ public static class PhoneVideoOptionsFactory
             : new VideoResolutionProfile(100, 1, 1, 0, false);
         return new AndroidVideoOptions
         {
+            RequestedResolutionPercent = settings.VideoResolutionPercent,
             ResolutionPercent = resolution.Percent,
             MaximumSize = resolution.MaximumSize,
             VideoBitrateBitsPerSecond = settings.VideoBitrateMbps * 1_000_000,

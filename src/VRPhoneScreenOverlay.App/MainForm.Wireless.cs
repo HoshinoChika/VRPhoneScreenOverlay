@@ -45,7 +45,7 @@ internal sealed partial class MainForm
         }
         catch (Exception)
         {
-            if (!IsDisposed && !Disposing) { _wirelessView.Status.Text = "设备扫描未完成，请刷新重试 [CONNECTION_METHOD_FAILED]"; }
+            if (!IsDisposed && !Disposing) { _wirelessView.Status.Text = "设备扫描失败，请刷新重试"; }
         }
         finally
         {
@@ -122,7 +122,7 @@ internal sealed partial class MainForm
         }
         catch (Exception)
         {
-            if (!IsDisposed && !Disposing) { _wirelessView.Status.Text = "配对切换未完成，请重试 [WIRELESS_SWITCH_FAILED]"; }
+            if (!IsDisposed && !Disposing) { _wirelessView.Status.Text = "配对方式切换失败，请重试"; }
             return;
         }
         finally { _switchingWireless = false; }
@@ -133,7 +133,7 @@ internal sealed partial class MainForm
         {
             if (_phone is not IAndroidWirelessConnectionService wireless)
             {
-                _wirelessView.Status.Text = "当前连接服务不支持无线配对";
+                _wirelessView.Status.Text = "当前无法使用无线配对，请尝试 USB 连接";
                 return;
             }
             WirelessAdbOperation operation = ReferenceEquals(sender, _wirelessView)
@@ -174,14 +174,14 @@ internal sealed partial class MainForm
                     if (refreshed) { _wirelessView.Status.Text = "等待扫码"; }
                 }, () => !IsDisposed && !Disposing && _wirelessView.Visible &&
                     _wirelessView.Method == WirelessPairingMethod.Scan && !_qrPausedForDevice,
-                    result => { _wirelessView.Status.Text = result.Message; }, cancellation.Token)
+                    result => { _wirelessView.Status.Text = UserFacingErrorMessages.FromReason(result.ReasonCode, result.Message); }, cancellation.Token)
                 : await wireless.ExecuteWirelessAsync(operation, endpoint, code, cancellation.Token);
             if (IsDisposed || Disposing || _wirelessView.Method != operationMethod) { return; }
             _wirelessView.ShowManualFallback(!result.Succeeded || result.ReasonCode == "WIRELESS_PAIRED");
             _wirelessView.Status.Text = result.Succeeded ? result.ReasonCode == "WIRELESS_PAIRED"
-                ? "已配对，连接未完成" : result.ReasonCode == "WIRELESS_CONNECTED" ? "配对成功，请在下方连接此设备"
+                ? "已配对，尚未连接；请刷新设备或改用手动连接" : result.ReasonCode == "WIRELESS_CONNECTED" ? "配对成功，请在下方连接此设备"
                 : operation == WirelessAdbOperation.Disconnect ? "已断开" : "已连接"
-                : result.Message;
+                : UserFacingErrorMessages.FromReason(result.ReasonCode, result.Message);
             _wirelessView.Status.ForeColor = result.Succeeded ? UiPalette.Success : UiPalette.Warning;
         }
         catch (OperationCanceledException)
@@ -192,7 +192,7 @@ internal sealed partial class MainForm
         {
             if (!IsDisposed && !Disposing)
             {
-                _wirelessView.Status.Text = "无线连接暂不可用，请刷新后重试 [WIRELESS_UI_FAILED]";
+                _wirelessView.Status.Text = "无线连接暂不可用，请刷新后重试";
                 _wirelessView.Status.ForeColor = UiPalette.Danger;
             }
         }

@@ -92,6 +92,7 @@ public static class AndroidReasonCodes
 
     /// <summary><c>ANDROID_CONTROL_WRITE_FAILED</c></summary>
     public const string ControlWriteFailed = "ANDROID_CONTROL_WRITE_FAILED";
+    public const string ControlChannelAborted = "ANDROID_CONTROL_CHANNEL_ABORTED";
 
     /// <summary><c>ANDROID_CREATED</c></summary>
     public const string Created = "ANDROID_CREATED";

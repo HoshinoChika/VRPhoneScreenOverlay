@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Net.Sockets;
+using VRPhoneScreenOverlay.Contracts;
 
 namespace VRPhoneScreenOverlay.Android;
 
@@ -36,6 +37,8 @@ internal sealed class ScrcpyTransportLease : IAsyncDisposable
     }
 
     public string DeviceKey { get; }
+    internal ServerOutputDiagnostic ServerOutput => _serverProcess.OutputDiagnostic;
+    internal void AbortStream() => _tcpClient.Dispose();
 
     public NetworkStream Stream
     {
@@ -94,7 +97,7 @@ internal sealed class ScrcpyTransportLease : IAsyncDisposable
         }
         catch (Exception exception) when (IsExpectedCleanupFailure(exception))
         {
-            WriteCleanupFailure("scrcpy_server_cleanup_failed", "SERVER_CLEANUP");
+            WriteCleanupFailure("scrcpy_server_cleanup_failed", "SERVER_CLEANUP", exception);
         }
 
         try
@@ -103,7 +106,7 @@ internal sealed class ScrcpyTransportLease : IAsyncDisposable
         }
         catch (Exception exception) when (IsExpectedCleanupFailure(exception))
         {
-            WriteCleanupFailure("scrcpy_server_cleanup_failed", "SERVER_CLEANUP");
+            WriteCleanupFailure("scrcpy_server_cleanup_failed", "SERVER_CLEANUP", exception);
         }
 
         try
@@ -115,12 +118,12 @@ internal sealed class ScrcpyTransportLease : IAsyncDisposable
                 .ConfigureAwait(false);
             if (!result.Succeeded)
             {
-                WriteCleanupFailure("scrcpy_forward_cleanup_failed", "FORWARD_CLEANUP");
+                WriteCleanupFailure("scrcpy_forward_cleanup_failed", "FORWARD_CLEANUP", command: result.Diagnostic);
             }
         }
         catch (Exception exception) when (IsExpectedCleanupFailure(exception))
         {
-            WriteCleanupFailure("scrcpy_forward_cleanup_failed", "FORWARD_CLEANUP");
+            WriteCleanupFailure("scrcpy_forward_cleanup_failed", "FORWARD_CLEANUP", exception);
         }
     }
 
@@ -128,13 +131,23 @@ internal sealed class ScrcpyTransportLease : IAsyncDisposable
         exception is IOException or InvalidOperationException or UnauthorizedAccessException or
             Win32Exception;
 
-    private void WriteCleanupFailure(string eventName, string reasonSuffix)
+    private void WriteCleanupFailure(string eventName, string reasonSuffix, Exception? exception = null, AdbCommandDiagnostic? command = null)
     {
         _log.TryWrite(new AndroidConnectionLogEntry(
             DateTimeOffset.UtcNow,
             eventName,
             $"{ScrcpySessionLauncher.ReasonCodePrefix(_kind)}_{reasonSuffix}_FAILED",
             $"手机{ScrcpySessionLauncher.ChannelName(_kind)}会话清理未完全成功",
-            DeviceKey));
+            DeviceKey)
+        {
+            AdbCommand = command ?? AdbDiagnosticPolicy.Describe(["shell"], "owned-client-cleanup") with
+            {
+                TargetDeviceKey = DeviceKey,
+                ExceptionType = exception?.GetType().FullName,
+                HResult = exception?.HResult,
+                NativeErrorCode = exception is Win32Exception native ? native.NativeErrorCode : null,
+                ErrorCategory = "cleanup-failed",
+            },
+        });
     }
 }

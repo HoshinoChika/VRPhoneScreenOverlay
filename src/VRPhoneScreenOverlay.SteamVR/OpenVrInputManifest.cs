@@ -1,4 +1,3 @@
-using System.Text;
 using Valve.VR;
 
 namespace VRPhoneScreenOverlay.SteamVR;
@@ -63,84 +62,18 @@ internal static class OpenVrInputManifest
             ? new OpenVrBindingResult(
                 true,
                 OpenVrReasonCodes.BindingUiOpened,
-                "SteamVR 绑定页面已打开；拖拽、触控、返回、桌面、" +
-                "最近任务、控制栏和截屏现在位于同一动作集")
+                "已请求打开 SteamVR 手柄绑定页面")
             : new OpenVrBindingResult(
                 false,
                 OpenVrReasonCodes.BindingUiFailed,
                 $"SteamVR 手柄绑定页面打开失败：{result}");
     }
 
-    internal static void RegisterApplicationManifest(string applicationManifest, bool? autoLaunch = null)
+    internal static VRPhoneScreenOverlay.Contracts.SteamVrStartupDiagnostic RegisterApplicationManifest(string applicationManifest, bool? autoLaunch = null)
     {
-        EVRApplicationError propertyError = EVRApplicationError.None;
-        StringBuilder binaryPath = new(2048);
-        OpenVR.Applications.GetApplicationPropertyString(
-            ApplicationKey,
-            EVRApplicationProperty.BinaryPath_String,
-            binaryPath,
-            (uint)binaryPath.Capacity,
-            ref propertyError);
-        if (propertyError == EVRApplicationError.None && binaryPath.Length > 0)
-        {
-            string registeredBinary = binaryPath.ToString();
-            if (!Path.IsPathRooted(registeredBinary))
-            {
-                EVRApplicationError directoryError = EVRApplicationError.None;
-                StringBuilder workingDirectory = new(2048);
-                OpenVR.Applications.GetApplicationPropertyString(
-                    ApplicationKey,
-                    EVRApplicationProperty.WorkingDirectory_String,
-                    workingDirectory,
-                    (uint)workingDirectory.Capacity,
-                    ref directoryError);
-                if (directoryError == EVRApplicationError.None && workingDirectory.Length > 0)
-                {
-                    registeredBinary = Path.Combine(workingDirectory.ToString(), registeredBinary);
-                }
-            }
-
-            string? registeredDirectory = Path.GetDirectoryName(registeredBinary);
-            if (!string.IsNullOrWhiteSpace(registeredDirectory))
-            {
-                // Both shipped layouts launch the root EXE. A portable manifest
-                // lives under app/, while the earlier flat layout kept it beside the EXE.
-                foreach (string relativeManifest in new[] { "manifest.vrmanifest", "app/manifest.vrmanifest" })
-                {
-                    string registeredManifest = Path.GetFullPath(
-                        Path.Combine(registeredDirectory, relativeManifest));
-                    if (!string.Equals(
-                        registeredManifest,
-                        applicationManifest,
-                        StringComparison.OrdinalIgnoreCase))
-                    {
-                        _ = OpenVR.Applications.RemoveApplicationManifest(registeredManifest);
-                    }
-                }
-            }
-        }
-
-        EVRApplicationError addError = OpenVR.Applications.AddApplicationManifest(
-            applicationManifest,
-            false);
-        if (addError != EVRApplicationError.None)
-        {
-            throw new OpenVrApplicationRegistrationException("清单注册", addError);
-        }
-
-        // Ordinary input registration must preserve SteamVR's saved preference.
-        // Only the explicit startup-setting path changes autolaunch.
-        if (autoLaunch is not bool enabled) { return; }
-        EVRApplicationError launchError = OpenVR.Applications.SetApplicationAutoLaunch(
-            ApplicationKey, enabled);
-        if (launchError != EVRApplicationError.None)
-        {
-            throw new OpenVrApplicationRegistrationException("自动启动设置", launchError);
-        }
-        if (OpenVR.Applications.GetApplicationAutoLaunch(ApplicationKey) != enabled)
-        {
-            throw new OpenVrApplicationRegistrationException("自动启动状态确认", EVRApplicationError.None);
-        }
+        var evidence = OpenVrApplicationRegistration.Apply(applicationManifest, autoLaunch, new OpenVrApplicationRegistry());
+        if (evidence.Stage != "confirmed") { throw new OpenVrApplicationRegistrationException(evidence); }
+        return evidence;
     }
 
     private static void Check(EVRInputError error, string operation)
@@ -187,7 +120,7 @@ public static class OpenVrBindingUiLauncher
 
                 if (!openUi)
                 {
-                    return new(true, OpenVrReasonCodes.InputReady, "SteamVR 手柄绑定已准备就绪");
+                    return new(true, OpenVrReasonCodes.InputReady, "SteamVR 手柄输入已就绪");
                 }
 
                 ulong actionSet = OpenVrInputManifest.GetActionSet();

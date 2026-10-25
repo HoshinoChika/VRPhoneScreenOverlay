@@ -16,7 +16,11 @@ internal sealed record AdbListResult(
     IReadOnlyList<AdbDeviceRecord> Devices,
     TimeSpan Duration,
     string ToolVersion,
-    string? WirelessServices = null);
+    string? WirelessServices = null)
+{
+    public AdbCommandDiagnostic? CommandDiagnostic { get; init; }
+    public AdbServerSummary? Server { get; init; }
+}
 
 internal sealed record AdbProbeResult(
     bool Succeeded,
@@ -44,6 +48,8 @@ internal sealed class AdbClient(
     private readonly AdbCommandRunner _runner = runner;
     private readonly TimeSpan _commandTimeout = commandTimeout;
     private string? _toolVersion;
+    private long _lastServerStatus;
+    private AdbServerSummary? _serverStatus;
 
     public async ValueTask<string?> ResolveWirelessServiceAsync(string endpoint, CancellationToken cancellationToken)
     {
@@ -77,7 +83,22 @@ internal sealed class AdbClient(
                 // Alias resolution is optional. Preserve the authoritative device list.
             }
         }
-        return new AdbListResult(devices, result.Duration, _toolVersion, wirelessServices);
+        if (_serverStatus is null || System.Diagnostics.Stopwatch.GetElapsedTime(_lastServerStatus) >= TimeSpan.FromMinutes(1))
+        {
+            _lastServerStatus = System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                AdbCommandResult status = await _runner.RunAsync(["server-status"], TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+                _serverStatus = status.Succeeded
+                    ? AdbServerSummaryParser.Parse(status.StandardOutput, _runner.ExecutablePath, _runner.SourceExecutablePath)
+                    : new(status.Diagnostic?.ErrorCategory == "unsupported-command" ? "unsupported" : "unavailable");
+            }
+            catch (Exception exception) when (exception is AndroidConnectionException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+            { _serverStatus = new("unavailable"); }
+            _serverStatus = _serverStatus with { SampledAt = DateTimeOffset.UtcNow };
+        }
+        return new AdbListResult(devices, result.Duration, _toolVersion, wirelessServices)
+        { CommandDiagnostic = result.Diagnostic, Server = _serverStatus };
     }
 
     public async ValueTask<AdbProbeResult> ProbeAsync(
@@ -172,12 +193,14 @@ internal sealed class AdbClient(
     {
         if (result.TimedOut)
         {
-            throw new AndroidConnectionException($"{operation}_TIMEOUT", "手机连接工具响应超时");
+            throw new AndroidConnectionException($"{operation}_TIMEOUT", "手机连接工具响应超时") { CommandDiagnostic = result.Diagnostic };
         }
 
         if (!result.Succeeded)
         {
-            throw new AndroidConnectionException($"{operation}_FAILED", "手机连接工具执行失败");
+            throw new AndroidConnectionException(result.OutputTruncated ? "ANDROID_TOOL_OUTPUT_LIMIT" : $"{operation}_FAILED",
+                result.OutputTruncated ? "手机连接工具返回内容超过限制，未使用不完整结果" : "手机连接工具执行失败")
+            { CommandDiagnostic = result.Diagnostic };
         }
     }
 
@@ -188,7 +211,8 @@ internal sealed class AdbClient(
 
 }
 
-public sealed class AndroidConnectionException(string reasonCode, string message) : Exception(message)
+public sealed class AndroidConnectionException(string reasonCode, string message, Exception? innerException = null) : Exception(message, innerException)
 {
     public string ReasonCode { get; } = reasonCode;
+    public AdbCommandDiagnostic? CommandDiagnostic { get; init; }
 }

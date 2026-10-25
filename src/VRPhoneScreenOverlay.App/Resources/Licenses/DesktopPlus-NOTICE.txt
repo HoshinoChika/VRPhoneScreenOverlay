@@ -1,0 +1,20 @@
+Desktop+ trigger-binding reference
+
+Project: Desktop+ by elvissteinjr and contributors
+https://github.com/elvissteinjr/DesktopPlus
+Reference version: v3.5
+Reference commit: 35efd7a06a453d3c36d47673316b814cc0243517
+Project license: GNU General Public License version 3.0
+The original license text is included as DesktopPlus-LICENSE.txt.
+
+The trigger path/mode/input/threshold rules were adapted from:
+assets/input/action_bindings_knuckles.json
+assets/input/action_bindings_touch.json
+assets/input/action_bindings_vive_controller.json
+assets/input/action_bindings_vive_cosmos.json
+assets/input/action_bindings_holographic.json
+assets/input/action_bindings_hpmotioncontroller.json
+
+VRPhoneScreen Overlay keeps its own application key, actions and functional
+layout. Its derived observer/capture binding generation is maintained here.
+PICO and unknown controller trigger rules are not taken from Desktop+.

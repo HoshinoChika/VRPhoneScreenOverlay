@@ -1,3 +1,4 @@
+using VRPhoneScreenOverlay.Contracts;
 using VRPhoneScreenOverlay.SteamVR;
 
 namespace VRPhoneScreenOverlay.Session;
@@ -17,6 +18,9 @@ public sealed class PhoneBindingSynchronizationService : IAsyncDisposable
     private readonly PhoneBindingDefaultsService _defaults;
     private readonly Func<bool> _ready;
     private readonly Func<string?> _accepted;
+    private readonly Action<BindingSnapshotRetentionDiagnostic>? _retentionObserver;
+    // Two owners only: saved edits and explicit default restoration.
+    private readonly Dictionary<string, DateTimeOffset> _reportedRetention = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _operation = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private Task? _worker;
@@ -28,15 +32,19 @@ public sealed class PhoneBindingSynchronizationService : IAsyncDisposable
     private bool _disposed;
     private BindingSynchronizationSnapshot _snapshot = new(BindingSynchronizationState.Waiting, "BINDING_SYNC_WAITING", "等待绑定修改");
 
-    public PhoneBindingSynchronizationService(Func<bool> ready) : this(new OpenVrSavedBindingPreparation(), new OpenVrLiveBindingApplication(),
-        new PhoneBindingDefaultsService(), ready, () => OpenVrBindingRecovery.DiagnosticSnapshot.Revision)
+    public PhoneBindingSynchronizationService(Func<bool> ready, Action<BindingSnapshotRetentionDiagnostic>? retentionObserver = null) : this(new OpenVrSavedBindingPreparation(), new OpenVrLiveBindingApplication(),
+        new PhoneBindingDefaultsService(), ready, () => OpenVrBindingRecovery.DiagnosticSnapshot.Revision, retentionObserver)
     { }
 
     internal PhoneBindingSynchronizationService(ISavedBindingPreparation saved, IBindingLiveApplication live, PhoneBindingDefaultsService defaults,
-        Func<bool> ready, Func<string?> accepted)
-    { _saved = saved; _live = live; _defaults = defaults; _ready = ready; _accepted = accepted; }
+        Func<bool> ready, Func<string?> accepted, Action<BindingSnapshotRetentionDiagnostic>? retentionObserver = null)
+    { _saved = saved; _live = live; _defaults = defaults; _ready = ready; _accepted = accepted; _retentionObserver = retentionObserver; }
 
     public BindingSynchronizationSnapshot Snapshot => Volatile.Read(ref _snapshot);
+    public IReadOnlyList<BindingSnapshotRetentionDiagnostic> SnapshotRetention =>
+        new[] { _live.RetentionDiagnostic is { } saved ? saved with { Operation = "saved-edit" } : null,
+            _defaults.RetentionDiagnostic is { } defaults ? defaults with { Operation = "defaults" } : null }
+        .OfType<BindingSnapshotRetentionDiagnostic>().ToArray();
     public event EventHandler<BindingSynchronizationChangedEventArgs>? Changed;
     public void RequestRetry()
     {
@@ -134,8 +142,12 @@ public sealed class PhoneBindingSynchronizationService : IAsyncDisposable
         }
         finally
         {
-            if (files is not null) { await files.DisposeAsync().ConfigureAwait(false); }
-            if (application is not null) { await application.DisposeAsync().ConfigureAwait(false); }
+            try
+            {
+                if (files is not null) { await files.DisposeAsync().ConfigureAwait(false); }
+                if (application is not null) { await application.DisposeAsync().ConfigureAwait(false); }
+            }
+            finally { ReportRetention(); }
         }
     }
 
@@ -150,7 +162,19 @@ public sealed class PhoneBindingSynchronizationService : IAsyncDisposable
             _failed = null;
             Publish(BindingSynchronizationState.Applied, "BINDING_DEFAULTS_APPLIED", "默认绑定已生效");
         }
-        finally { _operation.Release(); }
+        finally { ReportRetention(); _operation.Release(); }
+    }
+
+    private void ReportRetention()
+    {
+        foreach (BindingSnapshotRetentionDiagnostic diagnostic in SnapshotRetention)
+        {
+            string operation = diagnostic.Operation!;
+            if (_reportedRetention.TryGetValue(operation, out DateTimeOffset reported) && reported >= diagnostic.CapturedAt) { continue; }
+            _reportedRetention[operation] = diagnostic.CapturedAt;
+            try { _retentionObserver?.Invoke(diagnostic); }
+            catch (Exception) { /* Diagnostic observers cannot change an already decided binding outcome. */ }
+        }
     }
 
     public async Task<bool> SynchronizeNowAsync(CancellationToken token)

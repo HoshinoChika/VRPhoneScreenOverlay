@@ -5,6 +5,7 @@ using Vortice;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
+using VRPhoneScreenOverlay.Contracts;
 using VRPhoneScreenOverlay.Media;
 using static Vortice.Direct3D11.D3D11;
 
@@ -15,7 +16,10 @@ public sealed record GpuVideoFrame(
     int Width,
     int Height,
     long PresentationTimeMicroseconds,
-    int TextureSlot);
+    int TextureSlot)
+{
+    public VideoGeometryDiagnostic? Geometry { get; init; }
+}
 
 public interface IGpuVideoFramePresenter : IDisposable
 {
@@ -33,9 +37,10 @@ public static class GpuVideoFramePresenterFactory
 public sealed class GpuVideoPresenterException(
     string reasonCode,
     string message,
-    Exception? inner = null) : Exception(message, inner)
+    Exception? inner = null) : Exception(message, inner), IVideoGeometryFailure
 {
     public string ReasonCode { get; } = reasonCode;
+    public VideoGeometryDiagnostic? Geometry { get; init; }
 }
 
 internal sealed class D3D11VideoFramePresenter : IGpuVideoFramePresenter
@@ -60,9 +65,12 @@ internal sealed class D3D11VideoFramePresenter : IGpuVideoFramePresenter
     private int _outputHeight;
     private int _nextTextureSlot;
     private bool _disposed;
+    private bool _resourcesReady;
+    private readonly Action<string>? _resourceCheckpoint;
 
-    public D3D11VideoFramePresenter(long? adapterLuid)
+    public D3D11VideoFramePresenter(long? adapterLuid, Action<string>? resourceCheckpoint = null)
     {
+        _resourceCheckpoint = resourceCheckpoint;
         try
         {
             (_device, string adapterName) = CreateDevice(adapterLuid);
@@ -94,23 +102,25 @@ internal sealed class D3D11VideoFramePresenter : IGpuVideoFramePresenter
                 $"D3D11 视频转换器不支持 {frame.PixelFormat} 输入");
         }
 
-        if ((frame.Width & 1) != 0 || (frame.Height & 1) != 0)
+        VideoGeometryDiagnostic geometry = new("gpu-validate", frame.Width, frame.Height, frame.VisibleWidth,
+            frame.VisibleHeight, frame.Stride, frame.Pixels.Length, Layout: "nv12-to-rgba");
+        int requiredLength;
+        try { requiredLength = Nv12Geometry.Validate(geometry); }
+        catch (MediaDecoderException error)
         {
-            throw new GpuVideoPresenterException(
-                OpenVrReasonCodes.D3d11VideoNv12OddDimensions,
-                "NV12 视频宽高必须是偶数");
-        }
-
-        int requiredLength = checked(frame.Stride * frame.Height * 3 / 2);
-        if (frame.Pixels.Length < requiredLength)
-        {
-            throw new GpuVideoPresenterException(
-                OpenVrReasonCodes.D3d11VideoFrameTruncated,
-                "NV12 视频帧长度不足");
+            string reason = error.ReasonCode switch
+            {
+                "MEDIA_NV12_DIMENSIONS_ODD" => OpenVrReasonCodes.D3d11VideoNv12OddDimensions,
+                "MEDIA_NV12_FRAME_TRUNCATED" => OpenVrReasonCodes.D3d11VideoFrameTruncated,
+                _ => "D3D11_VIDEO_GEOMETRY_INVALID",
+            };
+            throw new GpuVideoPresenterException(reason, "视频帧布局无效，已停止提交", error) { Geometry = error.Geometry };
         }
 
         lock (_gate)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            string stage = "gpu-resources";
             try
             {
                 EnsureResources(
@@ -118,6 +128,7 @@ internal sealed class D3D11VideoFramePresenter : IGpuVideoFramePresenter
                     frame.Height,
                     frame.VisibleWidth,
                     frame.VisibleHeight);
+                stage = "gpu-upload";
                 UploadNv12(frame.Pixels, frame.Stride, requiredLength);
 
                 int textureSlot = _nextTextureSlot;
@@ -132,13 +143,16 @@ internal sealed class D3D11VideoFramePresenter : IGpuVideoFramePresenter
                         OutputIndex = 0,
                     },
                 ];
+                stage = "gpu-convert";
                 _videoContext!.VideoProcessorBlt(
                         _processor!,
                         _outputViews[textureSlot]!,
                         0,
                         streams)
                     .CheckError();
+                stage = "gpu-mask";
                 _roundedMask!.Apply(_context!, textureSlot);
+                stage = "gpu-flush";
                 _context!.Flush();
 
                 return new GpuVideoFrame(
@@ -146,18 +160,21 @@ internal sealed class D3D11VideoFramePresenter : IGpuVideoFramePresenter
                     frame.VisibleWidth,
                     frame.VisibleHeight,
                     frame.PresentationTimeMicroseconds,
-                    textureSlot);
+                    textureSlot)
+                { Geometry = geometry with { Stage = "gpu-present", RequiredBytes = requiredLength } };
             }
-            catch (GpuVideoPresenterException)
+            catch (GpuVideoPresenterException exception)
             {
-                throw;
+                throw new GpuVideoPresenterException(exception.ReasonCode, exception.Message, exception)
+                { Geometry = exception.Geometry ?? geometry with { Stage = stage, RequiredBytes = requiredLength } };
             }
             catch (Exception exception) when (exception is SharpGenException or COMException)
             {
                 throw new GpuVideoPresenterException(
                     OpenVrReasonCodes.D3d11VideoPresentFailed,
                     "D3D11 视频帧转换失败",
-                    exception);
+                    exception)
+                { Geometry = geometry with { Stage = stage, RequiredBytes = requiredLength } };
             }
         }
     }
@@ -190,7 +207,7 @@ internal sealed class D3D11VideoFramePresenter : IGpuVideoFramePresenter
         int outputWidth,
         int outputHeight)
     {
-        if (_inputTexture is not null &&
+        if (_resourcesReady && _inputTexture is not null &&
             _inputWidth == inputWidth &&
             _inputHeight == inputHeight &&
             _outputWidth == outputWidth &&
@@ -233,6 +250,7 @@ internal sealed class D3D11VideoFramePresenter : IGpuVideoFramePresenter
             0,
             ResourceOptionFlags.None);
         _inputTexture = _device!.CreateTexture2D(inputDescription);
+        _resourceCheckpoint?.Invoke("input-texture-created");
         VideoProcessorInputViewDescription inputViewDescription = new()
         {
             ViewDimension = VideoProcessorInputViewDimension.Texture2D,
@@ -287,6 +305,7 @@ internal sealed class D3D11VideoFramePresenter : IGpuVideoFramePresenter
             _processor,
             true,
             new RawRect(0, 0, outputWidth, outputHeight));
+        _resourcesReady = true;
     }
 
     private static (ID3D11Device Device, string AdapterName) CreateDevice(long? adapterLuid)
@@ -332,6 +351,7 @@ internal sealed class D3D11VideoFramePresenter : IGpuVideoFramePresenter
 
     private void ReleaseFrameResources()
     {
+        _resourcesReady = false;
         _roundedMask?.Dispose();
         _roundedMask = null;
         for (int slot = 0; slot < _textureSlotCount; slot++)

@@ -99,11 +99,13 @@ internal sealed class OpenVrPhoneMenuState
         if (!_ready || DashboardVisible) { _previousRecall = true; return false; }
         bool clicked = pressed && !_previousRecall;
         _previousRecall = pressed;
-        if (!clicked || !PhoneHidden) { return false; }
+        if (!clicked) { return false; }
         PhoneHidden = false;
         Expanded = false;
         MotionExpanded = false;
         VideoExpanded = false;
+        _keypadExpanded = false;
+        EnteredDigitCount = 0;
         ResetInput();
         InputRevision++;
         return true;

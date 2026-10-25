@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <VersionPrefix>0.2.7</VersionPrefix>
+    <VersionPrefix>0.2.8</VersionPrefix>
     <Product>VRPhoneScreen Overlay</Product>
     <Authors>VRPhoneScreen Overlay contributors</Authors>
     <Copyright>Copyright (c) VRPhoneScreen Overlay contributors</Copyright>

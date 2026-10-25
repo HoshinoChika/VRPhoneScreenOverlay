@@ -21,7 +21,7 @@ internal sealed partial class MainForm
     private void OnSteamVrStartupWarningShown(object? sender, EventArgs args)
     {
         if (_startupSteamVrWarning is not { } warning) { return; }
-        _operationStatus.Text = warning.Message;
+        _operationStatus.Text = UserFacingErrorMessages.FromReason(warning.ReasonCode, warning.Message);
         _operationStatus.ForeColor = UiPalette.Danger;
     }
 
@@ -30,7 +30,12 @@ internal sealed partial class MainForm
         if (_bindingSynchronization is null || _bindingGuideView.IsRestoringDefaults) { return; }
         BindingSynchronizationSnapshot snapshot = _bindingSynchronization.Snapshot;
         if (snapshot.State == BindingSynchronizationState.Waiting) { return; }
-        _bindingGuideView.OperationStatus.Text = snapshot.Message;
+        _bindingGuideView.OperationStatus.Text = snapshot.State switch
+        {
+            BindingSynchronizationState.Saved or BindingSynchronizationState.Applying => "正在应用绑定…",
+            BindingSynchronizationState.Failed => UserFacingErrorMessages.FromReason(snapshot.ReasonCode, snapshot.Message),
+            _ => snapshot.Message,
+        };
         _bindingGuideView.OperationStatus.ForeColor = snapshot.State switch
         {
             BindingSynchronizationState.Failed => UiPalette.Danger,

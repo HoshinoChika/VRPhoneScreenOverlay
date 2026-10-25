@@ -23,6 +23,9 @@ public sealed record DiagnosticsServiceOptions(
 {
     public string? FailedBundleDirectory { get; init; }
     internal string? OutgoingBundleDirectory { get; init; }
+    public Func<DiagnosticRuntimeHealth>? RuntimeHealthProvider { get; init; }
+    public TroubleshootingCredential? TroubleshootingCredential { get; init; }
+    public string? InvestigationDirectory { get; init; }
 
     public static DiagnosticsServiceOptions FromConfiguration(ClientServiceConfiguration configuration) => new(
         configuration.DiagnosticsInitUri,
@@ -38,7 +41,14 @@ public sealed record DiagnosticUploadContext(
     DiagnosticSessionSummary SessionSummary,
     DiagnosticBindingSummary BindingSummary,
     DiagnosticUserReport UserReport,
-    string? CurrentLogPath);
+    string? CurrentLogPath)
+{
+    internal string? IncidentRoot { get; init; }
+    internal DiagnosticRuntimeHealth? RuntimeHealth { get; init; }
+    internal string? ComponentRecoveryRoot { get; init; }
+    internal TimeSpan CollectionWindow { get; init; } = DiagnosticRetentionPolicy.UploadWindow;
+    internal string? InvestigationDirectory { get; init; }
+}
 
 public sealed record DiagnosticProgress(string Phase, long CompletedBytes, long TotalBytes);
 
@@ -47,10 +57,21 @@ public sealed record DiagnosticUploadResult(
     string ReasonCode,
     string Message,
     DateTimeOffset? ReceivedAt,
-    string? RetainedBundlePath = null);
+    string? RetainedBundlePath = null)
+{
+    public bool CoverageIncomplete { get; init; }
+    public string? UploadId { get; init; }
+    public string? BundleSha256 { get; init; }
+}
 
 public interface IAnonymousDiagnosticsService : IDisposable
 {
+    public ValueTask OpenLocalDirectoriesAsync(CancellationToken cancellationToken);
+    public ValueTask<DiagnosticLocalBundleResult> CreateLocalReportAsync(DiagnosticUploadContext context,
+        IProgress<DiagnosticProgress>? progress, CancellationToken cancellationToken);
+    public ValueTask<string> CreateLocalBundleAsync(DiagnosticUploadContext context,
+        IProgress<DiagnosticProgress>? progress, CancellationToken cancellationToken) =>
+        DiagnosticLocalFiles.CreateAsync(context, progress, cancellationToken);
     public ValueTask<DiagnosticUploadResult> BuildAndUploadAsync(
         DiagnosticUploadContext context,
         IProgress<DiagnosticProgress>? progress,
@@ -59,6 +80,13 @@ public interface IAnonymousDiagnosticsService : IDisposable
 
 public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsService
 {
+    public ValueTask<string> CreateLocalBundleAsync(DiagnosticUploadContext context,
+        IProgress<DiagnosticProgress>? progress, CancellationToken cancellationToken) =>
+        DiagnosticLocalFiles.CreateAsync(context with
+        {
+            RuntimeHealth = _options.RuntimeHealthProvider?.Invoke() ?? context.RuntimeHealth,
+            InvestigationDirectory = _options.InvestigationDirectory
+        }, progress, cancellationToken);
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -98,13 +126,24 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(context);
-        string bundlePath = await DiagnosticBundleBuilder.BuildAsync(
+        context = context with
+        {
+            RuntimeHealth = _options.RuntimeHealthProvider?.Invoke() ?? context.RuntimeHealth,
+            InvestigationDirectory = _options.InvestigationDirectory
+        };
+        string bundlePath;
+        try
+        {
+            bundlePath = await DiagnosticBundleBuilder.BuildAsync(
                 context,
                 _options.MaximumBundleBytes,
                 progress,
                 cancellationToken,
                 _options.OutgoingBundleDirectory)
             .ConfigureAwait(false);
+        }
+        catch (DiagnosticsException exception) when (exception.RetainedBundlePath is not null)
+        { return new(false, exception.ReasonCode, exception.Message, null, exception.RetainedBundlePath); }
         DiagnosticUploadResult result;
         try
         {
@@ -125,20 +164,20 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
                 RetainedBundlePath = retained,
                 Message = retained == bundlePath
                     ? $"上传失败，诊断包仍保留在 {retained}；请联系作者并提供此文件。"
-                    : "上传失败，诊断包已移至软件根目录；请联系作者并提供该文件。",
+                    : "上传失败，完整诊断包已保留；点击“打开软件日志”查看，并联系作者提供该文件。",
             };
         }
-        try { File.Delete(bundlePath); }
-        catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
-        return result;
+        string? coverage = await DiagnosticLocalFiles.ReadCoverageWarningAsync(bundlePath, cancellationToken).ConfigureAwait(false);
+        return result with { RetainedBundlePath = bundlePath, Message = result.Message + coverage, CoverageIncomplete = coverage is not null };
     }
 
     private Task<string> RetainBundleAsync(string bundlePath) => Task.Run(() =>
     {
-        string directory = _options.FailedBundleDirectory ?? ResolveInstallationDirectory();
+        string directory = _options.FailedBundleDirectory ?? Path.Combine(DiagnosticLocalFiles.DiagnosticsDirectory, "outgoing");
         string destination = Path.Combine(directory, $"VRPhoneScreenOverlay-Diagnostics-{Guid.NewGuid():N}.zip");
         try
         {
+            Directory.CreateDirectory(directory);
             File.Move(bundlePath, destination);
             return destination;
         }
@@ -148,16 +187,6 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
             return bundlePath;
         }
     });
-
-    private static string ResolveInstallationDirectory()
-    {
-        string runtime = Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar);
-        string? executableDirectory = Path.GetDirectoryName(Environment.ProcessPath);
-        return executableDirectory is not null &&
-            string.Equals(Path.GetFileName(Environment.ProcessPath), AppIdentity.ExecutableName, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(runtime, Path.Combine(executableDirectory, "app"), StringComparison.OrdinalIgnoreCase)
-                ? executableDirectory : runtime;
-    }
 
     private async ValueTask<DiagnosticUploadResult> UploadBundleAsync(DiagnosticUploadContext context,
         string bundlePath, IProgress<DiagnosticProgress>? progress, CancellationToken cancellationToken)
@@ -183,10 +212,7 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
             // The init call carries the bundle's sha256 as its request identity, so the server
             // can collapse repeats. That makes it safe to retry.
             using HttpResponseMessage initResponse = await _httpClient.SendAsync(
-                    () => new HttpRequestMessage(HttpMethod.Post, _options.InitUri)
-                    {
-                        Content = JsonContent.Create(request, options: _jsonOptions),
-                    },
+                    () => CreateInitRequest(request),
                     NetworkRetryPolicy.Idempotent,
                     HttpCompletionOption.ResponseHeadersRead,
                     null,
@@ -259,7 +285,11 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
                 completed.Accepted,
                 completed.Accepted ? DiagnosticsReasonCodes.Uploaded : DiagnosticsReasonCodes.NotAccepted,
                 completed.Accepted ? "匿名诊断包已上传" : "诊断包未被服务器接受",
-                completed.ReceivedAt);
+                completed.ReceivedAt)
+            {
+                UploadId = completed.Accepted ? upload.UploadId : null,
+                BundleSha256 = completed.Accepted ? sha256 : null,
+            };
         }
     }
 
@@ -277,7 +307,16 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
         }
     }
 
-    [GeneratedRegex(@"(?i)(?:bearer\s+|sk-)[a-z0-9._-]{12,}")]
+    private HttpRequestMessage CreateInitRequest(DiagnosticUploadInitRequest request)
+    {
+        HttpRequestMessage message = new(HttpMethod.Post, _options.InitUri)
+        { Content = JsonContent.Create(request, options: _jsonOptions) };
+        if (_options.TroubleshootingCredential is { } credential)
+        { message.Headers.Authorization = AuthenticationHeaderValue.Parse(credential.Authorization); }
+        return message;
+    }
+
+    [GeneratedRegex(@"(?i)(?:bearer\s+|sk-)[a-z0-9._-]{12,}|VRPSO1-[a-f0-9]{64}-[a-f0-9]{8}")]
     internal static partial Regex SecretPattern();
 }
 
@@ -287,11 +326,25 @@ public sealed class DiagnosticsException(
     Exception? inner = null) : Exception(message, inner)
 {
     public string ReasonCode { get; } = reasonCode;
+    public string? RetainedBundlePath { get; init; }
 }
 
 internal static class DiagnosticBundleBuilder
 {
-    private const long _maximumLogBytesPerFile = 5L * 1024 * 1024;
+    // A source handle is held only while copying one fixed-length snapshot. At
+    // most three scans reconcile rotation without waiting indefinitely on logs.
+    private const int _maximumCollectionPasses = 3;
+    private sealed record LogSelection(string Status, int AvailableFiles, bool EnumerationTruncated, string[] Paths);
+    private sealed record LogFileCollection(string File, string Status, long OriginalBytes, long ReadBytes,
+        bool TailTruncated, bool ShortRead, int Lines, int InvalidLines)
+    {
+        public bool OutputTruncated { get; init; }
+        public long WrittenBytes { get; init; }
+        public int OutsideWindowLines { get; init; }
+        public int UnknownTimeLines { get; init; }
+        public DateTimeOffset? FirstEventAt { get; init; }
+        public DateTimeOffset? LastEventAt { get; init; }
+    }
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
@@ -313,6 +366,7 @@ internal static class DiagnosticBundleBuilder
             "diagnostics",
             "outgoing");
         Directory.CreateDirectory(outputDirectory);
+        DiagnosticLocalFiles.PruneArchives(outputDirectory);
         string outputPath = Path.Combine(outputDirectory, $"diagnostic-{Guid.NewGuid():N}.zip");
         return await BuildAtPathAsync(context, maximumBundleBytes, progress, outputPath, cancellationToken).ConfigureAwait(false);
     }
@@ -321,6 +375,7 @@ internal static class DiagnosticBundleBuilder
         IProgress<DiagnosticProgress>? progress, string outputPath, CancellationToken cancellationToken)
     {
         try { return await WriteBundleAsync(context, maximumBundleBytes, progress, outputPath, cancellationToken).ConfigureAwait(false); }
+        catch (DiagnosticsException exception) when (exception.RetainedBundlePath == outputPath) { throw; }
         catch
         {
             try { File.Delete(outputPath); }
@@ -332,7 +387,10 @@ internal static class DiagnosticBundleBuilder
     private static async ValueTask<string> WriteBundleAsync(DiagnosticUploadContext context, long maximumBundleBytes,
         IProgress<DiagnosticProgress>? progress, string outputPath, CancellationToken cancellationToken)
     {
-        string[] logs = SelectLogFiles(context.CurrentLogPath).ToArray();
+        DateTimeOffset windowEnd = DateTimeOffset.UtcNow;
+        DateTimeOffset windowStart = windowEnd - context.CollectionWindow;
+        LogSelection selection = SelectLogFiles(context.CurrentLogPath, windowStart);
+        List<LogFileCollection> logResults = [];
         progress?.Report(new DiagnosticProgress("正在整理诊断信息", 0, 1));
         await using FileStream output = new(
             outputPath,
@@ -343,27 +401,19 @@ internal static class DiagnosticBundleBuilder
             FileOptions.Asynchronous);
         using (ZipArchive archive = new(output, ZipArchiveMode.Create, leaveOpen: true))
         {
-            await WriteJsonAsync(archive, "diagnostic.json", new
-            {
-                schemaVersion = 1,
-                product = AppIdentity.ProductName,
-                appVersion = context.AppVersion,
-                createdAt = DateTimeOffset.UtcNow,
-                os = RuntimeInformation.OSDescription,
-                architecture = RuntimeInformation.ProcessArchitecture.ToString(),
-                framework = RuntimeInformation.FrameworkDescription,
-                culture = CultureInfo.CurrentCulture.Name,
-                runtime = context.RuntimeSnapshot,
-                collection = new
-                {
-                    logFileCount = logs.Length,
-                    maximumLogFiles = 3,
-                    maximumLogBytesPerFile = _maximumLogBytesPerFile,
-                    phoneImagesIncluded = false,
-                    audioIncluded = false,
-                    bindingFilesIncluded = false
-                },
-            }, cancellationToken).ConfigureAwait(false);
+            await WriteJsonAsync(
+                    archive,
+                    "incident-summary.json",
+                    IncidentCollector.Collect(context.IncidentRoot, windowStart),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            await WriteJsonAsync(archive, "diagnostic-health.json", context.RuntimeHealth,
+                    cancellationToken).ConfigureAwait(false);
+            await WriteJsonAsync(archive, "component-recovery.json", ComponentRecoveryCollector.Collect(context.ComponentRecoveryRoot),
+                    cancellationToken).ConfigureAwait(false);
+            await WriteJsonAsync(archive, "ai-investigations.json",
+                await TroubleshootingInvestigationCollector.ReadAsync(context.InvestigationDirectory, context.CollectionWindow, cancellationToken).ConfigureAwait(false),
+                cancellationToken).ConfigureAwait(false);
             await WriteJsonAsync(
                     archive,
                     "settings-summary.json",
@@ -395,16 +445,62 @@ internal static class DiagnosticBundleBuilder
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            foreach (string logPath in logs)
+            selection = await CollectDirectoryAsync(archive, selection,
+                () => SelectLogFiles(context.CurrentLogPath, windowStart), "logs/", logResults,
+                windowStart, windowEnd, cancellationToken).ConfigureAwait(false);
+            int logFileCount = logResults.Count;
+            string incidentRoot = context.IncidentRoot ?? IncidentStorage.DefaultRoot;
+            bool incidentTimelinesIncomplete = false;
+            if (Directory.Exists(incidentRoot))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                string entryName = $"logs/{Path.GetFileName(logPath)}";
-                ZipArchiveEntry entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
-                await using Stream destination = await entry.OpenAsync(cancellationToken)
-                    .ConfigureAwait(false);
-                await CopySanitizedLogTailAsync(logPath, destination, cancellationToken)
-                    .ConfigureAwait(false);
+                IncidentStorage.ValidateDirectory(incidentRoot);
+                foreach (string directory in Directory.EnumerateDirectories(incidentRoot))
+                {
+                    if (!Guid.TryParseExact(Path.GetFileName(directory), "N", out _)) { continue; }
+                    IncidentStorage.ValidateDirectory(directory);
+                    LogSelection timelines = await CollectDirectoryAsync(archive,
+                        SelectFiles(directory, "timeline*.jsonl", windowStart),
+                        () => SelectFiles(directory, "timeline*.jsonl", windowStart),
+                        $"incidents/{Path.GetFileName(directory)}/", logResults,
+                        windowStart, windowEnd, cancellationToken).ConfigureAwait(false);
+                    incidentTimelinesIncomplete |= timelines.Status != "selected";
+                }
             }
+            await WriteJsonAsync(archive, "diagnostic.json", new
+            {
+                schemaVersion = 1,
+                product = AppIdentity.ProductName,
+                appVersion = context.AppVersion,
+                createdAt = DateTimeOffset.UtcNow,
+                os = RuntimeInformation.OSDescription,
+                architecture = RuntimeInformation.ProcessArchitecture.ToString(),
+                framework = RuntimeInformation.FrameworkDescription,
+                culture = CultureInfo.CurrentCulture.Name,
+                runtime = context.RuntimeSnapshot,
+                collection = new
+                {
+                    logFileCount,
+                    windowStart,
+                    windowEnd,
+                    retentionHours = 24,
+                    phoneImagesIncluded = false,
+                    audioIncluded = false,
+                    bindingFilesIncluded = false
+                },
+            }, cancellationToken).ConfigureAwait(false);
+            await WriteJsonAsync(archive, "log-collection.json", new
+            {
+                windowStart,
+                windowEnd,
+                selection.Status,
+                selection.AvailableFiles,
+                selection.EnumerationTruncated,
+                incidentTimelinesIncomplete,
+                omittedFiles = Math.Max(0, selection.AvailableFiles - logFileCount),
+                firstEventAt = logResults.Min(file => file.FirstEventAt),
+                lastEventAt = logResults.Max(file => file.LastEventAt),
+                files = logResults,
+            }, cancellationToken).ConfigureAwait(false);
         }
 
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -412,64 +508,154 @@ internal static class DiagnosticBundleBuilder
         {
             throw new DiagnosticsException(
                 DiagnosticsReasonCodes.BundleSizeInvalid,
-                "诊断包大小超出限制");
+                "最近 6 小时的完整诊断包超过上传上限，已保留在诊断资料文件夹，请点击“打开软件日志”查看")
+            { RetainedBundlePath = outputPath };
         }
 
         progress?.Report(new DiagnosticProgress("诊断包已生成", output.Length, output.Length));
         return outputPath;
     }
 
-    private static IEnumerable<string> SelectLogFiles(string? currentLogPath)
+    private static LogSelection SelectLogFiles(string? currentLogPath, DateTimeOffset windowStart)
     {
-        string? directory = string.IsNullOrWhiteSpace(currentLogPath)
-            ? null
-            : Path.GetDirectoryName(Path.GetFullPath(currentLogPath));
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        try
         {
-            yield break;
+            string? directory = string.IsNullOrWhiteSpace(currentLogPath)
+                ? null
+                : Path.GetDirectoryName(Path.GetFullPath(currentLogPath));
+            return SelectFiles(directory, "android-*.jsonl", windowStart);
         }
-
-        foreach (FileInfo file in new DirectoryInfo(directory)
-                     .EnumerateFiles("android-*.jsonl")
-                     .OrderByDescending(file => file.LastWriteTimeUtc)
-                     .Take(3))
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            yield return file.FullName;
+            return new("selection-failed", 0, false, []);
         }
     }
 
-    private static async ValueTask CopySanitizedLogTailAsync(
-        string path,
-        Stream destination,
-        CancellationToken cancellationToken)
+    private static LogSelection SelectFiles(string? directory, string pattern, DateTimeOffset windowStart)
     {
-        await using FileStream source = new(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete,
-            64 * 1024,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        if (source.Length > _maximumLogBytesPerFile)
+        try
         {
-            source.Seek(-_maximumLogBytesPerFile, SeekOrigin.End);
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            { return new("not-collected", 0, false, []); }
+            FileInfo[] candidates = new DirectoryInfo(directory).EnumerateFiles(pattern).ToArray();
+            return new("selected", candidates.Length, false,
+                candidates.Where(file => file.LastWriteTimeUtc >= windowStart.UtcDateTime)
+                    .OrderBy(file => file.LastWriteTimeUtc).Select(file => file.FullName).ToArray());
         }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        { return new("selection-failed", 0, false, []); }
+    }
 
-        using StreamReader reader = new(source, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+    private static async Task<LogSelection> CollectDirectoryAsync(ZipArchive archive, LogSelection selection,
+        Func<LogSelection> select, string prefix, List<LogFileCollection> results,
+        DateTimeOffset start, DateTimeOffset end, CancellationToken token)
+    {
+        HashSet<DiagnosticFileIdentity> copied = [];
+        HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, LogFileCollection> failures = new(StringComparer.OrdinalIgnoreCase);
+        bool stable = false;
+        bool selectionFailed = false;
+        for (int pass = 0; pass < _maximumCollectionPasses; pass++)
+        {
+            int newlyCopied = 0;
+            selectionFailed |= selection.Status == "selection-failed";
+            foreach (string path in selection.Paths)
+            {
+                token.ThrowIfCancellationRequested();
+                string name = prefix == "logs/" ? Path.GetFileName(path) : prefix + Path.GetFileName(path);
+                try
+                {
+                    LogFileCollection? collected = await CopySelectedFileAsync(archive, path, prefix,
+                        copied, names, start, end, token).ConfigureAwait(false);
+                    failures.Remove(path);
+                    if (collected is not null) { results.Add(collected); newlyCopied++; }
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                { failures[path] = new(name, "collection-failed", 0, 0, false, false, 0, 0); }
+            }
+            if (pass > 0 && newlyCopied == 0)
+            { stable = true; break; }
+            if (pass + 1 < _maximumCollectionPasses) { selection = select(); }
+        }
+        results.AddRange(failures.Values);
+        return selection with
+        {
+            Status = selectionFailed ? "selection-failed" : !stable ? "source-changing" : selection.Status,
+        };
+    }
+
+    private static async Task<LogFileCollection?> CopySelectedFileAsync(ZipArchive archive, string path, string prefix,
+        HashSet<DiagnosticFileIdentity> copied, HashSet<string> names,
+        DateTimeOffset start, DateTimeOffset end, CancellationToken token)
+    {
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+        { throw new IOException("Redirected log file."); }
+        await using FileStream source = new(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete, 65536, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        DiagnosticFileIdentity identity = DiagnosticFileIdentity.Read(source.SafeFileHandle);
+        if (copied.Contains(identity)) { return null; }
+        long length = source.Length;
+        string entryName = prefix + Path.GetFileName(path);
+        if (!names.Add(entryName))
+        {
+            int suffix = names.Count;
+            do { entryName = prefix + Path.GetFileNameWithoutExtension(path) + $".snapshot-{suffix++}.jsonl"; }
+            while (!names.Add(entryName));
+        }
+        string name = prefix == "logs/" ? Path.GetFileName(entryName) : entryName;
+        copied.Add(identity);
+        try
+        {
+            ZipArchiveEntry entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
+            await using Stream destination = await entry.OpenAsync(token).ConfigureAwait(false);
+            return await CopySanitizedLogWindowAsync(name, source, length, destination, start, end, token).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // A partial archive entry cannot be retried without duplicating its
+            // prefix. Retain the failure; the caller retries only failures to open.
+            return new(name, "collection-failed", length, 0, false, false, 0, 0);
+        }
+    }
+
+    private static async ValueTask<LogFileCollection> CopySanitizedLogWindowAsync(
+        string name, FileStream source, long originalBytes, Stream destination,
+        DateTimeOffset start, DateTimeOffset end, CancellationToken token)
+    {
+        using SnapshotReadStream snapshot = new(source, originalBytes);
+        using StreamReader reader = new(snapshot, Encoding.UTF8, true, 65536, true);
         await using StreamWriter writer = new(destination, new UTF8Encoding(false), leaveOpen: true);
-        if (source.Position > 0)
+        int lines = 0, invalid = 0, outside = 0, unknown = 0;
+        long written = 0;
+        DateTimeOffset? first = null, last = null;
+        while (await reader.ReadLineAsync(token).ConfigureAwait(false) is { } line)
         {
-            _ = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
-        {
+            token.ThrowIfCancellationRequested();
             string sanitized = DiagnosticSanitizer.SanitizeJsonLine(line);
-            await writer.WriteLineAsync(sanitized.AsMemory(), cancellationToken)
-                .ConfigureAwait(false);
+            bool knownTime = false;
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(sanitized);
+                if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                    document.RootElement.TryGetProperty("timestamp", out JsonElement stamp) &&
+                    stamp.ValueKind == JsonValueKind.String && stamp.TryGetDateTimeOffset(out DateTimeOffset time))
+                {
+                    knownTime = true;
+                    if (time < start || time > end) { outside++; continue; }
+                    first = first is null || time < first ? time : first;
+                    last = last is null || time > last ? time : last;
+                }
+            }
+            catch (JsonException) { }
+            if (!knownTime) { unknown++; }
+            if (sanitized.Contains("DIAGNOSTIC_LOG_LINE_INVALID", StringComparison.Ordinal)) { invalid++; }
+            await writer.WriteLineAsync(sanitized.AsMemory(), token).ConfigureAwait(false);
+            lines++; written += Encoding.UTF8.GetByteCount(sanitized) + writer.NewLine.Length;
         }
-
-        await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await writer.FlushAsync(token).ConfigureAwait(false);
+        return new(name, snapshot.Position < originalBytes ? "short-read" : "collected",
+            originalBytes, snapshot.Position, false, snapshot.Position < originalBytes, lines, invalid)
+        { WrittenBytes = written, OutsideWindowLines = outside, UnknownTimeLines = unknown, FirstEventAt = first, LastEventAt = last };
     }
 
     private static async ValueTask WriteJsonAsync<T>(

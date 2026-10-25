@@ -173,7 +173,7 @@ public sealed class AppHttpClient : IAppHttpClient
     {
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
-        HttpClientHandler? handler = new() { UseProxy = options.UseSystemProxy };
+        HttpClientHandler? handler = new() { UseProxy = options.UseSystemProxy, AllowAutoRedirect = options.AllowAutoRedirect };
         HttpClient? client = null;
         try
         {

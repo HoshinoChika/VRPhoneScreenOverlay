@@ -441,6 +441,9 @@ public sealed class ModernButton : Button
     [DefaultValue(false)]
     public bool Primary { get; set; }
 
+    [DefaultValue(typeof(Color), "Empty")]
+    public Color EmphasisColor { get; set; } = Color.Empty;
+
     [DefaultValue(UiButtonTone.Neutral)]
     public UiButtonTone Tone
     {
@@ -672,6 +675,14 @@ public sealed class ModernButton : Button
         {
             return _pressed ? GetProminentPressedColor() : GetProminentColor();
         }
+        if (!EmphasisColor.IsEmpty)
+        {
+            int weight = _pressed ? 1 : _hovered ? 3 : 2;
+            Color background = UiPalette.Surface;
+            return Color.FromArgb((background.R * (10 - weight) + EmphasisColor.R * weight) / 10,
+                (background.G * (10 - weight) + EmphasisColor.G * weight) / 10,
+                (background.B * (10 - weight) + EmphasisColor.B * weight) / 10);
+        }
 
         return _pressed
             ? UiPalette.Sidebar
@@ -686,6 +697,7 @@ public sealed class ModernButton : Button
         {
             return UiPalette.BorderSoft;
         }
+        if (!EmphasisColor.IsEmpty) { return EmphasisColor; }
 
         return Primary || Tone != UiButtonTone.Neutral
             ? GetProminentColor()

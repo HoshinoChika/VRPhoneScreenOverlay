@@ -18,6 +18,7 @@ public enum AndroidVideoStreamItemKind
 
 public sealed record AndroidVideoOptions
 {
+    public int? RequestedResolutionPercent { get; init; }
     public int ResolutionPercent { get; init; } = 100;
 
     public int MaximumFramesPerSecond { get; init; } = 60;
@@ -30,6 +31,11 @@ public sealed record AndroidVideoOptions
 
     internal void Validate()
     {
+        if (RequestedResolutionPercent is int requested)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(requested, 1, nameof(RequestedResolutionPercent));
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(requested, 100, nameof(RequestedResolutionPercent));
+        }
         ArgumentOutOfRangeException.ThrowIfLessThan(ResolutionPercent, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(ResolutionPercent, 100);
         ArgumentOutOfRangeException.ThrowIfLessThan(MaximumFramesPerSecond, 1);

@@ -104,7 +104,7 @@
       "vrphonescreenoverlay.android": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )"
         }
       },
       "vrphonescreenoverlay.contracts": {
@@ -113,7 +113,7 @@
       "vrphonescreenoverlay.input": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )"
         }
       },
       "vrphonescreenoverlay.media": {
@@ -121,7 +121,7 @@
         "dependencies": {
           "Concentus": "[2.2.2, )",
           "NAudio": "[3.0.0, )",
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
           "Vortice.MediaFoundation": "[3.8.3, )"
         }
       },
@@ -134,9 +134,9 @@
       "vrphonescreenoverlay.steamvr": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Media": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Presentation": "[0.2.7, )",
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Media": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Presentation": "[0.2.8, )",
           "Vortice.Direct3D11": "[3.8.3, )"
         }
       },

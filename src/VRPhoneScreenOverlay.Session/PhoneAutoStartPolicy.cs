@@ -4,6 +4,8 @@ internal sealed class PhoneAutoStartPolicy
 {
     private bool _suppressed;
     private int _attempts;
+    public bool Suppressed => _suppressed;
+    public int Attempts => _attempts;
 
     public void Reset() { _suppressed = false; _attempts = 0; }
 

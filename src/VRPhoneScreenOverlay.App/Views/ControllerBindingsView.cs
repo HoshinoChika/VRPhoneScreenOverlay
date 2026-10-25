@@ -92,7 +92,8 @@ public partial class ControllerBindingsView : UserControl
             }
             controllerSelector.SetNodes(_choices.Select(value => new FixedChoiceNode<string>(value.Key, value.Label)), choice.Key);
         }
-        if (updateStatus && status.Text != guide.Source) { status.Text = guide.Source; }
+        string source = guide.Source == "已保存绑定 · 缓存" ? "上次保存的绑定" : guide.Source;
+        if (updateStatus && status.Text != source) { status.Text = source; }
         instructions.SetGuide(guide);
     }
 }

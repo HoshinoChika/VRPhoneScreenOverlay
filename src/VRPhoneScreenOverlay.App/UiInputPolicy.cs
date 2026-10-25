@@ -8,6 +8,9 @@ internal static class UiInputPolicy
     public const string DateTimeFormat = "yyyy-MM-dd HH:mm";
     public const int MaximumDescriptionLength = 300;
 
+    public static bool CanRequestAi(int issueIndex, string? description) => issueIndex >= 0 &&
+        TryNormalizeDescription(description, out string? normalized) && !string.IsNullOrWhiteSpace(normalized);
+
     public static bool TryParseDateTime(
         string text,
         DateTime minimum,

@@ -54,6 +54,8 @@ public static class MediaReasonCodes
     /// <summary><c>MEDIA_H264_INITIALIZATION_FAILED</c></summary>
     public const string H264InitializationFailed = "MEDIA_H264_INITIALIZATION_FAILED";
 
+    public const string H264CleanupFailed = "MEDIA_H264_CLEANUP_FAILED";
+
     /// <summary><c>MEDIA_H264_NV12_NOT_SUPPORTED</c></summary>
     public const string H264Nv12NotSupported = "MEDIA_H264_NV12_NOT_SUPPORTED";
 

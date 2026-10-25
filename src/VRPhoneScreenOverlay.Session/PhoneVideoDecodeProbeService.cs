@@ -27,7 +27,7 @@ public sealed record PhoneVideoDecodeProbeResult(
 
 public sealed class PhoneVideoDecodeProbeService(
     IAndroidVideoSessionFactory videoSessions,
-    IAndroidConnectionLogSink log) : IPhoneVideoDecodeProbeService
+    IAndroidConnectionLogSink log, VideoDecoderPreference decoderPreference = VideoDecoderPreference.Automatic) : IPhoneVideoDecodeProbeService
 {
     private readonly IAndroidVideoSessionFactory _videoSessions = videoSessions;
     private readonly IAndroidConnectionLogSink _log = log;
@@ -55,93 +55,24 @@ public sealed class PhoneVideoDecodeProbeService(
                     $"当前视频编码 {session.Codec} 尚未接入解码器");
             }
 
-            int width = 0;
-            int height = 0;
-            int encodedPackets = 0;
-            long encodedBytes = 0;
-            byte[]? configuration = null;
-            IH264VideoDecoder? decoder = null;
-            IGpuVideoFramePresenter? presenter = null;
-            try
-            {
-                while (encodedPackets < 120)
-                {
-                    using AndroidVideoStreamItem item = await session.ReadNextAsync(timeout.Token);
-                    if (item.Kind == AndroidVideoStreamItemKind.Session)
-                    {
-                        width = item.Width;
-                        height = item.Height;
-                        continue;
-                    }
-
-                    if (item.Kind == AndroidVideoStreamItemKind.Configuration)
-                    {
-                        configuration = item.Payload.ToArray();
-                        continue;
-                    }
-
-                    encodedPackets++;
-                    encodedBytes += item.Payload.Length;
-                    if (decoder is null && width > 0 && height > 0 && configuration is not null)
-                    {
-                        decoder = VideoDecoderFactory.CreateMediaFoundationH264(
-                            width,
-                            height,
-                            options.MaximumFramesPerSecond,
-                            configuration);
-                        presenter = GpuVideoFramePresenterFactory.CreateD3D11();
-                    }
-
-                    if (decoder is null)
-                    {
-                        continue;
-                    }
-
-                    using DecodedVideoFrame? frame = decoder.DecodePacket(
-                        item.Payload.Span,
-                        item.PresentationTimeMicroseconds ?? 0,
-                        item.IsKeyFrame);
-                    if (frame is null)
-                    {
-                        continue;
-                    }
-
-                    GpuVideoFrame gpuFrame = presenter!.Present(frame);
-
-                    PhoneVideoDecodeProbeResult result = new(
-                        session.Codec,
-                        frame.VisibleWidth,
-                        frame.VisibleHeight,
-                        frame.PixelFormat,
-                        frame.Stride,
-                        encodedPackets,
-                        encodedBytes,
-                        frame.Pixels.Length,
-                        decoder.BackendName,
-                        presenter.AdapterBackend,
-                        gpuFrame.TextureSlot);
-                    _log.TryWrite(new AndroidConnectionLogEntry(
-                        DateTimeOffset.UtcNow,
-                        "video_decode_probe",
-                        PhoneReasonCodes.VideoDecodeReady,
-                        "手机视频编码与解码链路正常",
-                        session.DeviceKey,
-                        VideoWidth: frame.VisibleWidth,
-                        VideoHeight: frame.VisibleHeight,
-                        PacketCount: encodedPackets,
-                        PayloadBytes: encodedBytes));
-                    return result;
-                }
-
-                throw new PhoneVideoProbeException(
-                    PhoneReasonCodes.VideoDecodeFrameLimit,
-                    "收到 120 个编码包后仍未得到解码画面");
-            }
-            finally
-            {
-                presenter?.Dispose();
-                decoder?.Dispose();
-            }
+            await using LatestAndroidVideoFrameReader encoded = new(session, timeout.Token);
+            await using LatestDecodedVideoFrameReader decoded = new(encoded,
+                packet => VideoDecoderFactory.CreateMediaFoundationH264(packet.Width, packet.Height,
+                    options.MaximumFramesPerSecond, packet.Configuration.Span, preference: decoderPreference),
+                timeout.Token, maximumPackets: 120);
+            using DecodedStreamFrame? received = await decoded.ReadAsync(timeout.Token).ConfigureAwait(false);
+            if (received is null)
+            { throw new PhoneVideoProbeException(PhoneReasonCodes.VideoDecodeFrameLimit, "收到 120 个编码包后仍未得到解码画面"); }
+            DecodedVideoFrame frame = received.Frame;
+            using IGpuVideoFramePresenter presenter = GpuVideoFramePresenterFactory.CreateD3D11();
+            GpuVideoFrame gpuFrame = presenter.Present(frame);
+            PhoneVideoDecodeProbeResult result = new(session.Codec, frame.VisibleWidth, frame.VisibleHeight,
+                frame.PixelFormat, frame.Stride, checked((int)decoded.SubmittedPackets), encoded.EncodedPayloadBytes,
+                frame.Pixels.Length, received.Backend, presenter.AdapterBackend, gpuFrame.TextureSlot);
+            _log.TryWrite(new(DateTimeOffset.UtcNow, "video_decode_probe", PhoneReasonCodes.VideoDecodeReady,
+                "手机视频编码与解码链路正常", session.DeviceKey, VideoWidth: frame.VisibleWidth, VideoHeight: frame.VisibleHeight,
+                PacketCount: decoded.SubmittedPackets, PayloadBytes: encoded.EncodedPayloadBytes));
+            return result;
         }
         catch (OperationCanceledException) when (
             timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)

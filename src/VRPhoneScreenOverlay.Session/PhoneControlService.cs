@@ -22,12 +22,21 @@ public sealed record PhoneControlSnapshot(
     long ReplacedPointerMoves,
     double LastQueueDelayMilliseconds,
     bool ScreenGuardEnabled = false,
-    bool ScreenGuardFaulted = false);
+    bool ScreenGuardFaulted = false)
+{
+    public InputDispatchDiagnostic? Dispatch { get; init; }
+    public ServerOutputDiagnostic? ServerOutput { get; init; }
+    public ControlGeometryDiagnostic? Geometry { get; init; }
+}
 
 public sealed class PhoneControlChangedEventArgs(PhoneControlSnapshot snapshot) : EventArgs
 {
     public PhoneControlSnapshot Snapshot { get; } = snapshot;
 }
+
+public sealed record PhoneControlFailureDiagnostic(DateTimeOffset CapturedAt, string ReasonCode,
+    InputDispatchDiagnostic? Dispatch, ServerOutputDiagnostic? ServerOutput, ControlGeometryDiagnostic? Geometry,
+    DateTimeOffset? RecoveredAt = null);
 
 public sealed class PhoneControlServiceException(
     string reasonCode,
@@ -43,6 +52,7 @@ public interface IPhoneControlService : IAsyncDisposable
     public PhoneControlSnapshot Snapshot { get; }
 
     public PhoneControlSnapshot DiagnosticSnapshot { get; }
+    public IReadOnlyList<PhoneControlFailureDiagnostic> FailureHistory => [];
 
     public event EventHandler<PhoneControlChangedEventArgs>? StateChanged;
 
@@ -67,6 +77,10 @@ public interface IPhoneControlService : IAsyncDisposable
         float scrollDelta = 0,
         int unlockDigit = -1);
 
+    public void QueueFromSteamVr(PhoneInputCommandKind kind, float normalizedX, float normalizedY,
+        int screenWidth, int screenHeight, float scrollDelta, int unlockDigit, long? geometryRevision)
+        => QueueFromSteamVr(kind, normalizedX, normalizedY, screenWidth, screenHeight, scrollDelta, unlockDigit);
+
     public ValueTask StopAsync(CancellationToken cancellationToken);
 }
 
@@ -74,11 +88,13 @@ public sealed class PhoneControlService(
     IAndroidControlSessionFactory sessions,
     IAndroidConnectionLogSink log) : IPhoneControlService
 {
+    public const string InputPermissionDeniedMessage = "手机明确拒绝了输入注入。若手机有“USB 调试（安全设置）”，请开启并重启手机后重连；无线连接也适用。已发送不代表已执行。";
     private const long _primaryPointerId = -2;
     private readonly IAndroidControlSessionFactory _sessions = sessions;
     private readonly IAndroidConnectionLogSink _log = log;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly object _stateGate = new();
+    private readonly object _publishGate = new();
     private PhoneInputDispatcher? _dispatcher;
     private IAndroidControlSession? _session;
     private long _sequence;
@@ -127,6 +143,9 @@ public sealed class PhoneControlService(
         0,
         0,
         0);
+    private readonly List<PhoneControlFailureDiagnostic> _failureHistory = [];
+    public IReadOnlyList<PhoneControlFailureDiagnostic> FailureHistory
+    { get { lock (_stateGate) { return _failureHistory.ToArray(); } } }
 
     public PhoneControlSnapshot Snapshot { get; private set; } = new(
         PhoneControlState.Stopped,
@@ -190,7 +209,8 @@ public sealed class PhoneControlService(
                 IAndroidControlSession session = await _sessions.OpenAsync(
                     deviceKey,
                     cancellationToken).ConfigureAwait(false);
-                PhoneInputDispatcher dispatcher = new(session.SendAsync);
+                PhoneInputDispatcher dispatcher = PhoneInputDispatcher.CreateWithResults(session.SendWithResultAsync, session.AbortPendingOperations,
+                    diagnostic => OnDispatchFault(session, diagnostic));
                 lock (_stateGate)
                 {
                     _session = session;
@@ -238,7 +258,7 @@ public sealed class PhoneControlService(
         }
     }
 
-    public async ValueTask SendAsync(
+    public ValueTask SendAsync(
         PhoneInputCommandKind kind,
         float normalizedX,
         float normalizedY,
@@ -247,17 +267,25 @@ public sealed class PhoneControlService(
         float scrollDelta,
         CancellationToken cancellationToken,
         int unlockDigit = -1)
+        => SendCoreAsync(kind, normalizedX, normalizedY, screenWidth, screenHeight, scrollDelta, unlockDigit, null, cancellationToken);
+
+    private async ValueTask SendCoreAsync(PhoneInputCommandKind kind, float normalizedX, float normalizedY,
+        int screenWidth, int screenHeight, float scrollDelta, int unlockDigit, long? geometryRevision, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         PhoneInputDispatcher? dispatcher;
+        IAndroidControlSession? expectedSession;
         string? deviceKey;
         PhoneControlState state;
         lock (_stateGate)
         {
             dispatcher = _dispatcher;
+            expectedSession = _session;
             deviceKey = _session?.DeviceKey;
             state = Snapshot.State;
         }
+
+        if (kind == PhoneInputCommandKind.PointerMove && state != PhoneControlState.Ready) { return; }
 
         if (state == PhoneControlState.Faulted && !string.IsNullOrWhiteSpace(deviceKey))
         {
@@ -265,6 +293,7 @@ public sealed class PhoneControlService(
             lock (_stateGate)
             {
                 dispatcher = _dispatcher;
+                expectedSession = _session;
                 deviceKey = _session?.DeviceKey;
             }
         }
@@ -299,10 +328,21 @@ public sealed class PhoneControlService(
             positioned ? screenHeight : 0,
             DateTimeOffset.UtcNow,
             scrollDelta,
-            unlockDigit);
+            unlockDigit)
+        { GeometryRevision = geometryRevision };
         try
         {
             await dispatcher.EnqueueAsync(command, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InputCommandSuppressedException exception)
+        {
+            Publish(Snapshot with { ReasonCode = exception.ReasonCode, Message = "显示尺寸已变化，请松开触控后重新操作", Dispatch = dispatcher.Snapshot.Details }, expectedSession);
+            throw new PhoneControlServiceException(exception.ReasonCode, "旧触摸已结束，请松开后重新操作", exception);
+        }
+        catch (InputQueueRejectedException exception)
+        {
+            Publish(Snapshot with { ReasonCode = exception.ReasonCode, Message = "手机输入繁忙，本次指令未进入队列，请稍后重试", Dispatch = dispatcher.Snapshot.Details }, expectedSession);
+            throw new PhoneControlServiceException(exception.ReasonCode, "手机输入繁忙，本次指令未进入队列", exception);
         }
         catch (Exception exception) when (exception is AndroidConnectionException or IOException or InvalidOperationException)
         {
@@ -314,7 +354,8 @@ public sealed class PhoneControlService(
                 deviceKey,
                 metrics.SentCommands,
                 metrics.ReplacedPointerMoves,
-                metrics.LastQueueDelayMilliseconds));
+                metrics.LastQueueDelayMilliseconds)
+            { Dispatch = metrics.Details }, expectedSession);
             throw new PhoneControlServiceException(
                 PhoneReasonCodes.ControlSendFailed,
                 "手机控制指令发送失败",
@@ -327,11 +368,13 @@ public sealed class PhoneControlService(
             Publish(new PhoneControlSnapshot(
                 PhoneControlState.Ready,
                 PhoneReasonCodes.ControlCommandSent,
-                $"手机操作已发送：{CommandName(kind)}",
+                kind is PhoneInputCommandKind.PointerUp or PhoneInputCommandKind.PointerCancel
+                    ? "触摸终止指令已发送" : $"手机操作已发送：{CommandName(kind)}",
                 deviceKey,
                 metrics.SentCommands,
                 metrics.ReplacedPointerMoves,
-                metrics.LastQueueDelayMilliseconds));
+                metrics.LastQueueDelayMilliseconds)
+            { Dispatch = metrics.Details }, expectedSession);
         }
     }
 
@@ -343,7 +386,12 @@ public sealed class PhoneControlService(
         int screenHeight,
         float scrollDelta = 0,
         int unlockDigit = -1)
+        => QueueFromSteamVr(kind, normalizedX, normalizedY, screenWidth, screenHeight, scrollDelta, unlockDigit, null);
+
+    public void QueueFromSteamVr(PhoneInputCommandKind kind, float normalizedX, float normalizedY,
+        int screenWidth, int screenHeight, float scrollDelta, int unlockDigit, long? geometryRevision)
     {
+        if (kind == PhoneInputCommandKind.PointerMove && (_disposed || Snapshot.State != PhoneControlState.Ready)) { return; }
         if (kind == PhoneInputCommandKind.ToggleScreenGuard)
         {
             lock (_stateGate)
@@ -354,15 +402,14 @@ public sealed class PhoneControlService(
             }
             return;
         }
-        ValueTask pending = SendAsync(
+        ValueTask pending = SendCoreAsync(
             kind,
             normalizedX,
             normalizedY,
             screenWidth,
             screenHeight,
             scrollDelta,
-            CancellationToken.None,
-            unlockDigit);
+            unlockDigit, geometryRevision, CancellationToken.None);
         if (!pending.IsCompletedSuccessfully)
         {
             _ = ObserveSteamVrCommandAsync(pending);
@@ -434,37 +481,103 @@ public sealed class PhoneControlService(
             _guardFaulted = false;
         }
 
+        PhoneInputDispatcherSnapshot? metrics = null;
         if (dispatcher is not null)
         {
-            PhoneInputDispatcherSnapshot metrics = dispatcher.Snapshot;
             await dispatcher.DisposeAsync().ConfigureAwait(false);
+        }
+        Exception? sessionCleanupFailure = null;
+        if (session is not null)
+        {
+            try { await session.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception error) { sessionCleanupFailure = error; }
+            finally { if (dispatcher is not null) { metrics = dispatcher.Snapshot; } }
+        }
+        else if (dispatcher is not null) { metrics = dispatcher.Snapshot; }
+        if (metrics is not null)
+        {
+            lock (_stateGate)
+            {
+                _diagnosticSnapshot = _diagnosticSnapshot with
+                {
+                    SentCommands = metrics.SentCommands,
+                    ReplacedPointerMoves = metrics.ReplacedPointerMoves,
+                    LastQueueDelayMilliseconds = metrics.LastQueueDelayMilliseconds,
+                    Dispatch = metrics.Details,
+                    ServerOutput = session?.ServerOutput,
+                    Geometry = session?.Geometry
+                };
+                if (_failureHistory.Count > 0 && _failureHistory[^1].RecoveredAt is null)
+                {
+                    _failureHistory[^1] = _failureHistory[^1] with
+                    {
+                        Dispatch = metrics.Details,
+                        ServerOutput = session?.ServerOutput,
+                        Geometry = session?.Geometry
+                    };
+                }
+            }
             _log.TryWrite(new AndroidConnectionLogEntry(
                 DateTimeOffset.UtcNow,
                 "control_metrics",
-                PhoneReasonCodes.ControlMetrics,
+                metrics.Details?.TerminationStatus == "unconfirmed" ? "PHONE_CONTROL_TERMINATION_UNCONFIRMED" : PhoneReasonCodes.ControlMetrics,
                 $"手机控制统计；已发送 {metrics.SentCommands}；替换 MOVE {metrics.ReplacedPointerMoves}；" +
                 $"最后排队 {metrics.LastQueueDelayMilliseconds:F1} ms",
                 session?.DeviceKey,
                 PacketCount: metrics.SentCommands,
                 QueueDepth: metrics.ReliableQueueDepth,
-                ReplacedMoveCount: metrics.ReplacedPointerMoves));
+                ReplacedMoveCount: metrics.ReplacedPointerMoves)
+            { InputDispatch = metrics.Details, ServerOutput = session?.ServerOutput, ControlGeometry = session?.Geometry });
         }
-
-        if (session is not null)
-        {
-            await session.DisposeAsync().ConfigureAwait(false);
-        }
+        if (sessionCleanupFailure is not null)
+        { throw new PhoneControlServiceException("PHONE_CONTROL_CLEANUP_FAILED", "手机控制清理未完成，已保留诊断信息", sessionCleanupFailure); }
     }
 
     private async Task MaintainPhysicalScreenAsync(CancellationToken cancellationToken)
     {
         bool appliedOff = false;
         long nextActivity = 0;
+        long nextGeometry = Environment.TickCount64 + 2000;
+        long nextEvidence = 0;
+        long lastEvidenceRevision = -1;
         try
         {
             using PeriodicTimer timer = new(TimeSpan.FromMilliseconds(100));
             do
             {
+                if (Environment.TickCount64 >= nextGeometry)
+                {
+                    IAndroidControlSession? geometrySession;
+                    lock (_stateGate) { geometrySession = _session; }
+                    nextGeometry = Environment.TickCount64 + 2000;
+                    if (geometrySession?.SupportsGeometryRefresh == true)
+                    {
+                        long before = geometrySession.Geometry?.Revision ?? 0;
+                        if (!await SendDisplayCommandAsync(PhoneInputCommandKind.SynchronizeDisplayGeometry, cancellationToken).ConfigureAwait(false)) { continue; }
+                        nextGeometry = Environment.TickCount64 + 2000;
+                        if (geometrySession.Geometry is { } geometry)
+                        {
+                            if (geometry.Revision != before)
+                            {
+                                _log.TryWrite(new(DateTimeOffset.UtcNow, "control_geometry", "PHONE_CONTROL_GEOMETRY_CHANGED",
+                                    "手机原生尺寸已变化，旧触摸已尽力终止，等待新手势", geometrySession.DeviceKey)
+                                { ControlGeometry = geometry });
+                            }
+                            Publish(Snapshot with { Geometry = geometry }, geometrySession);
+                        }
+                    }
+                }
+                if (Environment.TickCount64 >= nextEvidence)
+                {
+                    nextEvidence = Environment.TickCount64 + 1000;
+                    IAndroidControlSession? session;
+                    lock (_stateGate) { session = _session; }
+                    if (session?.ServerOutput is { } evidence && evidence.Revision != lastEvidenceRevision)
+                    {
+                        lastEvidenceRevision = evidence.Revision;
+                        Publish(Snapshot with { ServerOutput = evidence }, session);
+                    }
+                }
                 bool desiredOff = _turnOffScreen;
                 if (desiredOff)
                 {
@@ -474,15 +587,15 @@ public sealed class PhoneControlService(
                     // deliberately light the panel before turning it off again.
                     if (!appliedOff || Environment.TickCount64 >= nextActivity)
                     {
-                        await SendDisplayCommandAsync(PhoneInputCommandKind.UserActivity, cancellationToken).ConfigureAwait(false);
+                        if (!await SendDisplayCommandAsync(PhoneInputCommandKind.UserActivity, cancellationToken).ConfigureAwait(false)) { continue; }
                         nextActivity = Environment.TickCount64 + 2000;
                     }
-                    await SendDisplayCommandAsync(PhoneInputCommandKind.MaintainDisplayOff, cancellationToken).ConfigureAwait(false);
+                    if (!await SendDisplayCommandAsync(PhoneInputCommandKind.MaintainDisplayOff, cancellationToken).ConfigureAwait(false)) { continue; }
                 }
                 else if (appliedOff)
                 {
                     // The single producer has finished its last off command first.
-                    await SendDisplayCommandAsync(PhoneInputCommandKind.WakeScreen, cancellationToken).ConfigureAwait(false);
+                    if (!await SendDisplayCommandAsync(PhoneInputCommandKind.WakeScreen, cancellationToken).ConfigureAwait(false)) { continue; }
                 }
                 if (appliedOff != desiredOff)
                 {
@@ -502,13 +615,18 @@ public sealed class PhoneControlService(
         }
     }
 
-    private async ValueTask SendDisplayCommandAsync(PhoneInputCommandKind kind, CancellationToken cancellationToken)
+    private async ValueTask<bool> SendDisplayCommandAsync(PhoneInputCommandKind kind, CancellationToken cancellationToken)
     {
         PhoneInputDispatcher? dispatcher;
         lock (_stateGate) { dispatcher = _dispatcher; }
-        if (dispatcher is null) { return; }
-        await dispatcher.EnqueueAsync(new PhoneInputCommand(Interlocked.Increment(ref _sequence),
-            kind, _primaryPointerId, 0, 0, 0, 0, DateTimeOffset.UtcNow), cancellationToken).ConfigureAwait(false);
+        if (dispatcher is null) { return false; }
+        try
+        {
+            await dispatcher.EnqueueAsync(new PhoneInputCommand(Interlocked.Increment(ref _sequence),
+                kind, _primaryPointerId, 0, 0, 0, 0, DateTimeOffset.UtcNow), cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (InputQueueRejectedException) { return false; }
     }
 
     private static async Task ObserveSteamVrCommandAsync(ValueTask pending)
@@ -518,7 +636,7 @@ public sealed class PhoneControlService(
             await pending.ConfigureAwait(false);
         }
         catch (Exception exception) when (
-            exception is PhoneControlServiceException or ObjectDisposedException)
+            exception is PhoneControlServiceException or ObjectDisposedException or OperationCanceledException)
         {
         }
     }
@@ -529,21 +647,77 @@ public sealed class PhoneControlService(
         Publish(Snapshot);
     }
 
-    private void Publish(PhoneControlSnapshot snapshot)
+    private void OnDispatchFault(IAndroidControlSession session, InputDispatchDiagnostic diagnostic)
     {
-        lock (_stateGate)
+        _log.TryWrite(new(DateTimeOffset.UtcNow, "control_dispatch", diagnostic.FailureReason ?? PhoneReasonCodes.ControlSendFailed,
+            "手机控制发送未完成，已中止本应用通道", session.DeviceKey)
+        { InputDispatch = diagnostic });
+        Publish(Snapshot with
         {
-            snapshot = snapshot with { ScreenGuardEnabled = _guardApplied, ScreenGuardFaulted = _guardFaulted };
-            Snapshot = snapshot;
-            if (snapshot.SentCommands > 0 ||
-                snapshot.ReplacedPointerMoves > 0 ||
-                snapshot.LastQueueDelayMilliseconds > 0)
-            {
-                _diagnosticSnapshot = snapshot;
-            }
-        }
+            State = PhoneControlState.Faulted,
+            ReasonCode = PhoneReasonCodes.ControlSendFailed,
+            Message = "手机控制发送未完成；下次操作会重新建立通道",
+            Dispatch = diagnostic
+        }, session);
+    }
 
-        StateChanged?.Invoke(this, new PhoneControlChangedEventArgs(snapshot));
+    private void Publish(PhoneControlSnapshot snapshot, IAndroidControlSession? expectedSession = null)
+    {
+        lock (_publishGate)
+        {
+            lock (_stateGate)
+            {
+                if (expectedSession is not null && !ReferenceEquals(_session, expectedSession)) { return; }
+                snapshot = snapshot with { ScreenGuardEnabled = _guardApplied, ScreenGuardFaulted = _guardFaulted };
+                if (_session?.ServerOutput is { } evidence) { snapshot = snapshot with { ServerOutput = evidence }; }
+                if (_session?.Geometry is { } geometry) { snapshot = snapshot with { Geometry = geometry }; }
+                if (_dispatcher is { } dispatcher)
+                {
+                    PhoneInputDispatcherSnapshot dispatch = dispatcher.Snapshot;
+                    snapshot = snapshot with
+                    {
+                        SentCommands = dispatch.SentCommands,
+                        ReplacedPointerMoves = dispatch.ReplacedPointerMoves,
+                        LastQueueDelayMilliseconds = dispatch.LastQueueDelayMilliseconds,
+                        Dispatch = dispatch.Details
+                    };
+                }
+                if (snapshot.State == PhoneControlState.Ready && snapshot.ServerOutput?.InputPermissionRefusalObserved == true)
+                {
+                    snapshot = snapshot with
+                    {
+                        ReasonCode = "PHONE_CONTROL_INPUT_PERMISSION_DENIED",
+                        Message = InputPermissionDeniedMessage
+                    };
+                }
+                if (snapshot.State == PhoneControlState.Faulted && Snapshot.State != PhoneControlState.Faulted)
+                {
+                    if (_failureHistory.Count == 4) { _failureHistory.RemoveAt(0); }
+                    _failureHistory.Add(new(DateTimeOffset.UtcNow, snapshot.ReasonCode, snapshot.Dispatch, snapshot.ServerOutput, snapshot.Geometry));
+                }
+                else if (snapshot.State == PhoneControlState.Faulted && _failureHistory.Count > 0 && _failureHistory[^1].RecoveredAt is null)
+                {
+                    _failureHistory[^1] = _failureHistory[^1] with
+                    {
+                        Dispatch = snapshot.Dispatch,
+                        ServerOutput = snapshot.ServerOutput,
+                        Geometry = snapshot.Geometry
+                    };
+                }
+                else if (snapshot.State == PhoneControlState.Ready && _failureHistory.Count > 0 &&
+                    _failureHistory[^1].RecoveredAt is null)
+                { _failureHistory[^1] = _failureHistory[^1] with { RecoveredAt = DateTimeOffset.UtcNow }; }
+                Snapshot = snapshot;
+                if (snapshot.ServerOutput is not null || snapshot.Dispatch is not null || snapshot.SentCommands > 0 ||
+                    snapshot.ReplacedPointerMoves > 0 ||
+                    snapshot.LastQueueDelayMilliseconds > 0)
+                {
+                    _diagnosticSnapshot = snapshot;
+                }
+            }
+
+            StateChanged?.Invoke(this, new PhoneControlChangedEventArgs(snapshot));
+        }
     }
 
     private void WriteLog(

@@ -9,6 +9,7 @@ internal sealed partial class MainForm
     private readonly StartupUpdateGate _startupUpdateGate = new();
     private bool _pendingUpdatePrompt;
     private bool _installingUpdate;
+    private readonly string? _updateRestartBlockedReason;
     private CancellationTokenSource? _updateDownloadCancellation;
     private DateTimeOffset? _lastUpdateCheckAt;
     private string? _lastUpdateFailureKind;
@@ -19,6 +20,16 @@ internal sealed partial class MainForm
     {
         await AboutOperationRunner.RunAsync(async token =>
         {
+            if (_updateRestartBlockedReason is not null)
+            {
+                _lastUpdateReason = _updateRestartBlockedReason;
+                Views.MainShellView shell = Controls.OfType<Views.MainShellView>().Single();
+                shell.ShowMainPage(_aboutPage, shell.AboutNavigation);
+                SetControlText(_aboutOperationStatus,
+                    "更新未完成，原版本已保留。请退出其他正在连接手机的软件后重试。");
+                SetControlForeColor(_aboutOperationStatus, UiPalette.Warning);
+                return;
+            }
             if (await _startupUpdateGate.WaitOnceAsync(token).ConfigureAwait(true) && !IsDisposed && !_aboutOperationInProgress)
             { await RunAboutOperationAsync(deadline => CheckForUpdatesAsync(true, deadline)).ConfigureAwait(true); }
         }, _formLifetime.Token).ConfigureAwait(true);
@@ -38,7 +49,7 @@ internal sealed partial class MainForm
             UpdateCheckResult result = await _updateService.CheckAsync(DisplayVersion, deadline.Token).ConfigureAwait(true);
             _lastUpdateReason = result.ReasonCode;
             _availableUpdate = result.UpdateAvailable ? result.Release : null;
-            SetControlText(_aboutOperationStatus, result.Message);
+            SetControlText(_aboutOperationStatus, UserFacingErrorMessages.FromReason(result.ReasonCode, result.Message));
             SetControlForeColor(_aboutOperationStatus, result.UpdateAvailable ? UiPalette.Success : UiPalette.TextSecondary);
             SetControlText(_checkUpdateButton, "检查更新");
             _pendingUpdatePrompt = _availableUpdate is not null;

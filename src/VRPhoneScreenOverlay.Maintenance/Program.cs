@@ -8,6 +8,11 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--diagnostic-monitor")
+        {
+            return Diagnostics.IncidentExitMonitor.Run(args);
+        }
+
         if (!args.Contains("--apply-update", StringComparer.Ordinal))
         {
             return 2;
@@ -29,7 +34,14 @@ internal static class Program
     {
         ValidatePaths(update);
         WaitForParent(update.ParentProcessId);
-        InstallDirectoryLockReleaser.Release(update.InstallDirectory);
+        try { Update.UpdateInstallAvailability.EnsureAvailable(update.InstallDirectory); }
+        catch (Update.UpdateException exception)
+        {
+            // A client may appear after the in-app preflight. Leave the install intact
+            // and reopen it with an inline recovery notice instead of killing its server.
+            using Process restored = StartApplication(update.InstallDirectory, null, null, sharedAdbBlockedReason: exception.ReasonCode);
+            return 4;
+        }
         Process? updatedProcess = null;
         try
         {
@@ -73,7 +85,8 @@ internal static class Program
     private static Process StartApplication(
         string installDirectory,
         string? healthFile,
-        string? token)
+        string? token,
+        string? sharedAdbBlockedReason = null)
     {
         ProcessStartInfo startInfo = new()
         {
@@ -81,6 +94,11 @@ internal static class Program
             WorkingDirectory = installDirectory,
             UseShellExecute = false,
         };
+        if (sharedAdbBlockedReason is not null)
+        {
+            startInfo.ArgumentList.Add("--update-adb-blocked");
+            startInfo.ArgumentList.Add(sharedAdbBlockedReason);
+        }
         if (!string.IsNullOrWhiteSpace(healthFile) && !string.IsNullOrWhiteSpace(token))
         {
             startInfo.ArgumentList.Add("--update-health-file");
@@ -141,7 +159,8 @@ internal static class Program
             {
                 if (!process.HasExited)
                 {
-                    process.Kill(entireProcessTree: true);
+                    // The application's descendants may include a now-shared ADB daemon.
+                    process.Kill(entireProcessTree: false);
                     process.WaitForExit(5_000);
                 }
             }

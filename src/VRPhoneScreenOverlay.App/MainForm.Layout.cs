@@ -92,6 +92,11 @@ internal sealed partial class MainForm
         _refreshButton = homePage.RefreshButton;
         _videoProbeButton = homePage.VideoProbeButton;
         _operationStatus = homePage.OperationStatus;
+        _controlStatus.Click += (_, _) =>
+        {
+            if (_phoneControl.Snapshot is { State: PhoneControlState.Ready, ServerOutput.InputPermissionRefusalObserved: true })
+            { shell.ShowContextHelp(_controlStatus, PhoneControlService.InputPermissionDeniedMessage); }
+        };
         _bindingGuideView = featuresPage;
         _bindingGuideView.ControllerSelector.SetNodes(ControllerBindingGuideService.Choices.Select(
             choice => new FixedChoiceNode<string>(choice.Key, choice.Label)), "pico_controller");

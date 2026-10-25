@@ -1,4 +1,5 @@
 using System.Buffers;
+using VRPhoneScreenOverlay.Contracts;
 
 namespace VRPhoneScreenOverlay.Media;
 
@@ -58,6 +59,11 @@ public sealed class DecodedVideoFrame : IDisposable
     public VideoPixelFormat PixelFormat { get; }
 
     public long PresentationTimeMicroseconds { get; }
+    // Assigned once by the decoder before ownership leaves its serialized output
+    // stage. Zero keeps compatibility with synchronous/custom decoders that do
+    // not publish through concurrent return-value and notification paths.
+    public long OutputSequence { get; internal set; }
+    public VideoGeometryDiagnostic? SourceGeometry { get; init; }
 
     public ReadOnlyMemory<byte> Pixels => (_owner ?? throw new ObjectDisposedException(
         nameof(DecodedVideoFrame))).Memory[.._length];
@@ -73,6 +79,22 @@ public interface IH264VideoDecoder : IDisposable
 {
     public string BackendName { get; }
 
+    public event EventHandler? OutputAvailable { add { } remove { } }
+    public DecodedVideoFrame? TakeOutput() => null;
+    public long ReplacedOutputFrames => 0;
+    public string DiagnosticState => "synchronous-compatible";
+    public ValueTask<DecodedVideoFrame?> DecodePacketAsync(ReadOnlyMemory<byte> payload,
+        long presentationTimeMicroseconds, bool keyFrame, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(DecodePacket(payload.Span, presentationTimeMicroseconds, keyFrame));
+    }
+    public ValueTask<DecodedVideoFrame?> DrainAsync(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(Drain());
+    }
+
     public DecodedVideoFrame? DecodePacket(
         ReadOnlySpan<byte> annexBPayload,
         long presentationTimeMicroseconds,
@@ -81,22 +103,27 @@ public interface IH264VideoDecoder : IDisposable
     public DecodedVideoFrame? Drain();
 }
 
+public enum VideoDecoderPreference { Automatic, Software }
+
 public static class VideoDecoderFactory
 {
     public static IH264VideoDecoder CreateMediaFoundationH264(
         int width,
         int height,
         int framesPerSecond,
-        ReadOnlySpan<byte> codecConfiguration) =>
+        ReadOnlySpan<byte> codecConfiguration,
+        Action<DecoderInitializationEvent>? observe = null,
+        VideoDecoderPreference preference = VideoDecoderPreference.Automatic) =>
         new MediaFoundationH264Decoder(
             width,
             height,
             framesPerSecond,
-            codecConfiguration);
+            codecConfiguration, observe, preference);
 }
 
 public sealed class MediaDecoderException(string reasonCode, string message, Exception? inner = null) :
-    Exception(message, inner)
+    Exception(message, inner), IVideoGeometryFailure
 {
     public string ReasonCode { get; } = reasonCode;
+    public VideoGeometryDiagnostic? Geometry { get; init; }
 }

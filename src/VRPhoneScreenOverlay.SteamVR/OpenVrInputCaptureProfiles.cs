@@ -12,7 +12,7 @@ internal static class OpenVrInputCaptureProfiles
     public static async Task EnrichAsync(CancellationToken cancellationToken, OpenVrControllerHand? preparedHand = null)
     {
         CVRSystem system = OpenVR.System;
-        OpenVrControllerHand hand = OpenVrControllerPreferences.Load();
+        OpenVrControllerHand hand = preparedHand ?? OpenVrControllerPreferences.Load();
         uint device = system.GetTrackedDeviceIndexForControllerRole(hand == OpenVrControllerHand.Left
             ? ETrackedControllerRole.LeftHand : ETrackedControllerRole.RightHand);
         if (device == OpenVR.k_unTrackedDeviceIndexInvalid) { return; }
@@ -38,7 +38,7 @@ internal static class OpenVrInputCaptureProfiles
             JsonNode? profile = JsonNode.Parse(await File.ReadAllTextAsync(profilePath, cancellationToken).ConfigureAwait(false));
             JsonNode? binding = JsonNode.Parse(await File.ReadAllTextAsync(runtimePath, cancellationToken).ConfigureAwait(false));
             if (binding is null || profile is null) { return; }
-            OpenVrInputCaptureBindings.Add(binding, preparedHand ?? hand, profile: profile);
+            OpenVrInputCaptureBindings.Add(binding, hand, profile: profile);
             await File.WriteAllTextAsync(temporary, binding.ToJsonString(), cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             File.Move(temporary, runtimePath, overwrite: true);

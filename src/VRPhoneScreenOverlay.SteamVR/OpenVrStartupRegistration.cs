@@ -9,7 +9,7 @@ public static class OpenVrStartupRegistration
     public static OpenVrBindingResult Configure(bool enabled)
         => ConfigureAsync(enabled, CancellationToken.None).AsTask().GetAwaiter().GetResult();
 
-    public static ValueTask<OpenVrBindingResult> ConfigureAsync(bool enabled, CancellationToken token)
+    public static async ValueTask<OpenVrBindingResult> ConfigureAsync(bool? enabled, CancellationToken token)
     {
         ProcessStartInfo start = new()
         {
@@ -20,8 +20,13 @@ public static class OpenVrStartupRegistration
             RedirectStandardOutput = true,
         };
         start.ArgumentList.Add("configure-startup");
-        start.ArgumentList.Add(enabled ? "enabled" : "disabled");
-        return RunUtilityAsync(start, TimeSpan.FromSeconds(3), token);
+        start.ArgumentList.Add(enabled is null ? "preserve" : enabled.Value ? "enabled" : "disabled");
+        OpenVrBindingResult result = await RunUtilityAsync(start, TimeSpan.FromSeconds(3), token).ConfigureAwait(false);
+        return result.StartupDiagnostic is not null ? result : result with
+        {
+            StartupDiagnostic = new(result.ReasonCode == OpenVrReasonCodes.StartupRegistrationTimeout ? "utility-timeout" : "utility",
+                RequestedAutoLaunch: enabled)
+        };
     }
 
     internal static async ValueTask<OpenVrBindingResult> RunUtilityAsync(ProcessStartInfo start, TimeSpan timeout, CancellationToken token)
@@ -46,7 +51,7 @@ public static class OpenVrStartupRegistration
         { return new(false, OpenVrReasonCodes.StartupRegistrationTimeout, "SteamVR连接超时，请检查SteamVR状态和运行权限。"); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or
             System.ComponentModel.Win32Exception or JsonException)
-        { return new(false, OpenVrReasonCodes.StartupRegistrationFailed, "SteamVR 自动启动设置未应用，请检查 SteamVR 状态后重试"); }
+        { return new(false, OpenVrReasonCodes.StartupRegistrationUnconfirmed, "SteamVR 自动启动设置结果未确认，请检查 SteamVR 状态后重试"); }
         finally
         {
             try
@@ -80,7 +85,7 @@ public static class OpenVrStartupRegistration
         return text.ToString();
     }
 
-    internal static OpenVrBindingResult ConfigureInUtility(bool enabled)
+    internal static OpenVrBindingResult ConfigureInUtility(bool? enabled)
     {
         lock (OpenVrRuntimeHost.ApiGate)
         {
@@ -96,17 +101,20 @@ public static class OpenVrStartupRegistration
                     if (!utilityStarted)
                     {
                         return new(false, OpenVrReasonCodes.InitializationFailed,
-                            "SteamVR 自动启动设置未应用，请确认已安装 SteamVR 后重试");
+                            "SteamVR 自动启动设置未应用，请确认已安装 SteamVR 后重试")
+                        { StartupDiagnostic = new("initialize", RequestedAutoLaunch: enabled, NativeError: error.ToString()) };
                     }
                 }
                 string applicationManifest = OpenVrInputManifest.ResolveApplicationManifest();
-                OpenVrInputManifest.RegisterApplicationManifest(applicationManifest, enabled);
+                var diagnostic = OpenVrInputManifest.RegisterApplicationManifest(applicationManifest, enabled);
                 return new(true, OpenVrReasonCodes.StartupConfigured,
-                    enabled ? "已启用随 SteamVR 启动" : "已关闭随 SteamVR 启动");
+                    enabled is null ? "已校准安装登记，保留 SteamVR 原有启动偏好" : enabled.Value ? "已启用随 SteamVR 启动" : "已关闭随 SteamVR 启动")
+                { StartupDiagnostic = diagnostic };
             }
             catch (OpenVrApplicationRegistrationException exception)
             {
-                return new(false, OpenVrReasonCodes.StartupRegistrationFailed, exception.UserMessage);
+                return new(false, OpenVrReasonCodes.StartupRegistrationFailed, exception.UserMessage)
+                { StartupDiagnostic = exception.Diagnostic };
             }
             catch (Exception exception) when (exception is InvalidOperationException or IOException or
                 UnauthorizedAccessException or DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)

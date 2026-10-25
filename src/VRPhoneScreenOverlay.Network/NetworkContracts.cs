@@ -54,6 +54,7 @@ public sealed record NetworkClientOptions(
 {
     /// <summary>Use the operating-system proxy. First-party service clients use direct HTTPS.</summary>
     public bool UseSystemProxy { get; init; } = true;
+    public bool AllowAutoRedirect { get; init; } = true;
 
     /// <summary>Backoff delay before the second attempt.</summary>
     public TimeSpan ResolvedRetryBaseDelay => RetryBaseDelay ?? TimeSpan.FromMilliseconds(400);

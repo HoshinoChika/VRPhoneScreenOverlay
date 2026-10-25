@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using VRPhoneScreenOverlay.Contracts;
 
 namespace VRPhoneScreenOverlay.Android;
 
@@ -6,10 +7,14 @@ internal sealed record AndroidResourceValidationResult(
     bool Succeeded,
     string ReasonCode,
     string Message,
-    string ExecutablePath);
+    string ExecutablePath)
+{
+    public ComponentFileEvidence[] Files { get; init; } = [];
+}
 
 internal static class AndroidResourceValidator
 {
+    internal static IReadOnlyDictionary<string, string> ExpectedHashes => _expectedHashes;
     private static readonly IReadOnlyDictionary<string, string> _expectedHashes =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -23,41 +28,33 @@ internal static class AndroidResourceValidator
         CancellationToken cancellationToken)
     {
         string fullDirectory = Path.GetFullPath(resourceDirectory);
+        List<ComponentFileEvidence> files = [];
         foreach ((string fileName, string expectedHash) in _expectedHashes)
         {
             string path = Path.Combine(fullDirectory, fileName);
-            if (!File.Exists(path))
+            try
             {
-                return new AndroidResourceValidationResult(
-                    false,
-                    AndroidReasonCodes.ResourceMissing,
-                    $"缺少手机连接组件：{fileName}",
-                    Path.Combine(fullDirectory, "adb.exe"));
+                FileAttributes attributes = File.GetAttributes(path);
+                if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+                { files.Add(new(fileName, "redirected", null, expectedHash, null)); continue; }
+                await using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+                    bufferSize: 128 * 1024, useAsync: true);
+                long size = stream.Length;
+                if (size > 32L * 1024 * 1024)
+                { files.Add(new(fileName, "size-limit", size, expectedHash, null)); continue; }
+                string actualHash = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
+                files.Add(new(fileName, actualHash == expectedHash ? "valid" : "hash-mismatch", size, expectedHash, actualHash));
             }
-
-            await using FileStream stream = new(
-                path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                bufferSize: 128 * 1024,
-                useAsync: true);
-            byte[] hash = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
-            string actualHash = Convert.ToHexStringLower(hash);
-            if (!string.Equals(actualHash, expectedHash, StringComparison.Ordinal))
-            {
-                return new AndroidResourceValidationResult(
-                    false,
-                    AndroidReasonCodes.ResourceHashMismatch,
-                    $"手机连接组件校验失败：{fileName}",
-                    Path.Combine(fullDirectory, "adb.exe"));
-            }
+            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+            { files.Add(new(fileName, "missing", null, expectedHash, null)); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            { files.Add(new(fileName, "unreadable", null, expectedHash, null, error.HResult)); }
         }
-
-        return new AndroidResourceValidationResult(
-            true,
-            AndroidReasonCodes.ResourcesReady,
-            "内置手机连接组件校验通过",
-            Path.Combine(fullDirectory, "adb.exe"));
+        ComponentFileEvidence? failed = files.FirstOrDefault(f => f.Status != "valid");
+        return failed is null
+            ? new(true, AndroidReasonCodes.ResourcesReady, "手机连接组件校验通过", Path.Combine(fullDirectory, "adb.exe")) { Files = files.ToArray() }
+            : new(false, failed.Status == "missing" ? AndroidReasonCodes.ResourceMissing : AndroidReasonCodes.ResourceHashMismatch,
+                $"手机连接组件校验失败：{failed.File}", Path.Combine(fullDirectory, "adb.exe"))
+            { Files = files.ToArray() };
     }
 }

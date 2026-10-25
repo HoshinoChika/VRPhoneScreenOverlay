@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\VRPhoneScreenOverlay.Contracts\VRPhoneScreenOverlay.Contracts.csproj" />
+    <EmbeddedResource Include="Resources\Recovery\adb-fixed.zip" LogicalName="VRPhoneScreenOverlay.Android.adb-fixed.zip" />
   </ItemGroup>
 
   <ItemGroup>

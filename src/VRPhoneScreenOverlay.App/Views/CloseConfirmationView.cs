@@ -21,7 +21,8 @@ public partial class CloseConfirmationView : UserControl
         description.Location = new Point(28, 68);
         description.Text = "版本 " + version;
         description.ForeColor = UiPalette.TextSecondary;
-        releaseNotes.Text = string.IsNullOrWhiteSpace(notes) ? "此版本暂无更新说明。" : notes[..Math.Min(notes.Length, 12000)];
+        releaseNotes.Text = string.IsNullOrWhiteSpace(notes) ? "此版本暂无更新说明。" :
+            notes[..Math.Min(notes.Length, 12000)].ReplaceLineEndings("\r\n");
         releaseNotes.Visible = true;
         minimizeButton.Location = new Point(28, 280);
         exitButton.Location = new Point(308, 280);
@@ -57,12 +58,12 @@ public partial class CloseConfirmationView : UserControl
         Rectangle Scaled(int x, int y, int width, int height) => new(
             (int)MathF.Round(x * scale), (int)MathF.Round(y * scale),
             (int)MathF.Round(width * scale), (int)MathF.Round(height * scale));
-        card.Bounds = IsUpdate ? Scaled(80, 28, 596, 398) : Scaled(80, 78, 596, 304);
-        title.Bounds = Scaled(28, IsUpdate ? 20 : 28, 540, 42);
-        description.Bounds = Scaled(28, IsUpdate ? 68 : 86, 540, 34);
-        releaseNotes.Bounds = Scaled(28, 105, 540, 140);
-        minimizeButton.Bounds = Scaled(28, IsUpdate ? 280 : 142, 260, 62);
-        exitButton.Bounds = Scaled(308, IsUpdate ? 280 : 142, 260, 62);
+        card.Bounds = IsUpdate ? Scaled(24, 12, 710, 435) : Scaled(80, 78, 596, 304);
+        title.Bounds = IsUpdate ? Scaled(24, 14, 662, 38) : Scaled(28, 28, 540, 42);
+        description.Bounds = IsUpdate ? Scaled(24, 56, 662, 30) : Scaled(28, 86, 540, 34);
+        releaseNotes.Bounds = Scaled(24, 92, 662, 240);
+        minimizeButton.Bounds = IsUpdate ? Scaled(24, 350, 318, 56) : Scaled(28, 142, 260, 62);
+        exitButton.Bounds = IsUpdate ? Scaled(368, 350, 318, 56) : Scaled(308, 142, 260, 62);
         cancelButton.Bounds = Scaled(218, 238, 160, 38);
     }
 

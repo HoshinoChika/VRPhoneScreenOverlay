@@ -502,29 +502,30 @@ internal sealed class OpenVrBindingProfileStore(
         {
             foreach (JsonNode? item in mainSources)
             {
-                if (item is not JsonObject source || source["path"] is null)
+                if (item is not JsonObject source || source["path"] is null || source["inputs"] is not JsonObject inputs)
                 {
                     continue;
                 }
 
-                HashSet<string> outputs = new(StringComparer.OrdinalIgnoreCase);
-                CollectOutputPaths(source["inputs"], outputs);
-                if (!outputs.Any(IsGatedPhoneInputAction))
+                JsonObject observedInputs = [];
+                foreach ((string slot, JsonNode? input) in inputs)
+                {
+                    if (input is not JsonObject mapping || mapping["output"] is not JsonValue value ||
+                        !value.TryGetValue(out string? output) || output is null || !IsGatedPhoneInputAction(output)) { continue; }
+                    // A released click does not prove that a touch is released.
+                    // Preserve touch explicitly; keep the existing immediate-click
+                    // observer for other slots, including long/double gestures.
+                    string physicalSlot = slot == "touch" ? "touch" : "click";
+                    observedInputs[physicalSlot] = new JsonObject { ["output"] = _phoneButtonStateActionPath };
+                }
+                if (observedInputs.Count == 0)
                 {
                     continue;
                 }
 
                 JsonObject stateSource = (JsonObject)source.DeepClone();
-                stateSource["inputs"] = new JsonObject
-                {
-                    ["click"] = new JsonObject { ["output"] = _phoneButtonStateActionPath },
-                };
-                if (stateSource["parameters"] is JsonObject parameters)
-                {
-                    parameters.Remove("double_press_delay");
-                    parameters.Remove("long_press_delay");
-                    parameters.Remove("long_press_expiry");
-                }
+                stateSource["inputs"] = observedInputs;
+                OpenVrBindingParameterPolicy.KeepSamplingParameters(stateSource);
 
                 stateSources.Add(stateSource);
             }

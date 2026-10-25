@@ -7,14 +7,20 @@ public interface IPhoneVideoPipelineFactory
 {
     public IOpenVrSceneOverlay CreateOverlay();
     public IH264VideoDecoder CreateDecoder(int width, int height, ReadOnlySpan<byte> configuration);
+    public IH264VideoDecoder CreateDecoder(int width, int height, ReadOnlySpan<byte> configuration,
+        Action<DecoderInitializationEvent> observe) => CreateDecoder(width, height, configuration);
     public IGpuVideoFramePresenter CreatePresenter(long graphicsAdapterLuid);
 }
 
-public sealed class PhoneVideoPipelineFactory(OpenVrVideoSettingsChannel? videoSettings = null) : IPhoneVideoPipelineFactory
+public sealed class PhoneVideoPipelineFactory(OpenVrVideoSettingsChannel? videoSettings = null,
+    VideoDecoderPreference decoderPreference = VideoDecoderPreference.Automatic) : IPhoneVideoPipelineFactory
 {
     public IOpenVrSceneOverlay CreateOverlay() => OpenVrSceneOverlayFactory.Create(videoSettings: videoSettings);
     public IH264VideoDecoder CreateDecoder(int width, int height, ReadOnlySpan<byte> configuration) =>
-        VideoDecoderFactory.CreateMediaFoundationH264(width, height, 60, configuration);
+        VideoDecoderFactory.CreateMediaFoundationH264(width, height, 60, configuration, preference: decoderPreference);
+    public IH264VideoDecoder CreateDecoder(int width, int height, ReadOnlySpan<byte> configuration,
+        Action<DecoderInitializationEvent> observe) =>
+        VideoDecoderFactory.CreateMediaFoundationH264(width, height, 60, configuration, observe, decoderPreference);
     public IGpuVideoFramePresenter CreatePresenter(long graphicsAdapterLuid) =>
         GpuVideoFramePresenterFactory.CreateD3D11(graphicsAdapterLuid);
 }

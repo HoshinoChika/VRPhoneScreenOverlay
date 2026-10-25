@@ -10,7 +10,12 @@ public readonly record struct OpenVrPhoneInputCommand(
     float NormalizedX = 0,
     float NormalizedY = 0,
     float ScrollDelta = 0,
-    int UnlockDigit = -1);
+    int UnlockDigit = -1)
+{
+    public int ScreenWidth { get; init; }
+    public int ScreenHeight { get; init; }
+    public long? GeometryRevision { get; init; }
+}
 
 public delegate void OpenVrPhoneInputSink(OpenVrPhoneInputCommand command);
 
@@ -36,6 +41,7 @@ public sealed record OpenVrPhoneInteractionSnapshot(
     bool ScaleBound = false,
     bool ScaleActive = false)
 {
+    public PhoneInputPathDiagnostic? InputPath { get; init; }
     public static OpenVrPhoneInteractionSnapshot Stopped { get; } = new(
         false,
         false,
@@ -48,7 +54,10 @@ public sealed record OpenVrPhoneInteractionSnapshot(
 public sealed record OpenVrBindingResult(
     bool Succeeded,
     string ReasonCode,
-    string Message);
+    string Message)
+{
+    public SteamVrStartupDiagnostic? StartupDiagnostic { get; init; }
+}
 
 internal sealed class OpenVrPhoneInteraction : IDisposable
 {
@@ -68,7 +77,8 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
     private const string _phoneButtonStatePath =
         "/actions/phonebuttonstate/in/AnyPhoneInputPressed";
     private const int _pollIntervalMilliseconds = 8;
-    private const int _maximumCommandsPerPoll = 8;
+    // Fixed scratch buffer: includes geometry cancellation before ordinary input.
+    private const int _maximumCommandsPerPoll = 10;
     private readonly object _openVrGate;
     private OpenVrControllerHand _controllerHand;
     // Capacity one, reject concurrent requests; the input worker owns application.
@@ -98,6 +108,11 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
     private int _appliedInputRevision = -1;
     private readonly OpenVrPlacementStore _placementStore;
     private readonly OpenVrPhoneTouchState _touchState = new();
+    private readonly OpenVrInputEvidence _inputEvidence = new();
+    private int _latestFrameWidth, _latestFrameHeight;
+    private long _appliedControlGeometryRevision;
+    private readonly OpenVrGeometryRevisionGate _geometryRevision = new();
+    public void NotifyControlGeometryRevision(long revision) => _geometryRevision.Notify(revision);
     private readonly CVRSystem _system;
     private readonly CVROverlay _overlay;
     private readonly ulong _overlayHandle;
@@ -160,13 +175,11 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
     private long _lastGrabTimestamp;
     private volatile bool _keepAwakeWhileGrabbed;
     private volatile bool _unlockKeypadEnabled;
-    private volatile bool _screenGuardEnabled;
-    private volatile bool _screenGuardFaulted;
+    private volatile int _screenGuardState;
 
     public void SetScreenGuard(bool enabled, bool faulted)
     {
-        _screenGuardEnabled = enabled;
-        _screenGuardFaulted = faulted;
+        _screenGuardState = (enabled ? 1 : 0) | (faulted ? 2 : 0);
     }
     private volatile bool _frameReady;
     private string? _headsetModel;
@@ -235,6 +248,7 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
     public bool PhonePresented => _phonePresented;
 
     public event OpenVrPhoneInputSink? PhoneInputReceived;
+    internal PhoneInputPathDiagnostic CaptureInputEvidence() => _inputEvidence.Snapshot(Environment.TickCount64, true);
 
     public async ValueTask SwitchControllerHandAsync(OpenVrControllerHand hand, CancellationToken cancellationToken)
     {
@@ -356,9 +370,12 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
         ArgumentOutOfRangeException.ThrowIfLessThan(frameHeight, 1);
         _baseWidthMeters = baseWidthMeters;
         _frameAspectRatio = frameWidth / (float)frameHeight;
+        _latestFrameWidth = frameWidth; _latestFrameHeight = frameHeight;
         _frameReady = true;
         ApplyOverlayWidth();
     }
+
+    public void ConfirmFrameGeometry() => _geometryRevision.FramePresented();
 
     // Both callers hold ApiGate. Visibility has one owner even though video and
     // input are independently scheduled. Video never unconditionally shows it.
@@ -405,11 +422,11 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
         if (_phonePresented) { _submitVideoTexture(); }
     }
 
-    private void RenderPresentation(OpenVrSharedPlayspaceInput playspace)
+    private void RenderPresentation(OpenVrSharedPlayspaceInput playspace, bool recall = false)
     {
         UpdatePresentationEnvironment();
         _menu.SynchronizeSettings(playspace);
-        if (!_phonePresented && _menu.PhoneVisible)
+        if (_menu.PhoneVisible && (recall || !_phonePresented))
         {
             // Re-entry includes manual show, dashboard return and tracking
             // recovery. Scale survives, but position always uses the current head.
@@ -452,7 +469,7 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
 
         if (_touchState.TryCancel(out OpenVrPhoneInputCommand cancelPointer))
         {
-            PhoneInputReceived?.Invoke(cancelPointer);
+            EmitPhoneInput(cancelPointer);
         }
 
         CancelSmoothScroll();
@@ -542,7 +559,7 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
             return;
         }
 
-        PhoneInputReceived?.Invoke(cancelPointer);
+        EmitPhoneInput(cancelPointer);
     }
 
     private void ReleaseActionUpdateLease()
@@ -623,7 +640,7 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
             _activeActionSets[4].ulActionSet = captureSet;
             _activeActionSets[4].ulRestrictedToDevice = _controllerInputSource;
             ulong recallSet = 0;
-            Check(OpenVR.Input.GetActionSetHandle("/actions/phonerecall", ref recallSet), "隐藏时唤回动作集");
+            Check(OpenVR.Input.GetActionSetHandle("/actions/phonerecall", ref recallSet), "手机浮窗唤回动作集");
             _activeActionSets[5].ulActionSet = recallSet;
             _activeActionSets[5].ulRestrictedToDevice = _controllerInputSource;
 
@@ -665,6 +682,13 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
         lock (_openVrGate)
         {
             ApplyPendingHandChange();
+            if (_touchState.TrySetGeometry(_latestFrameWidth, _latestFrameHeight, out OpenVrPhoneInputCommand geometryCancel))
+            { commands[commandCount++] = geometryCancel; }
+            if (_geometryRevision.Apply(out long nativeRevision))
+            {
+                _appliedControlGeometryRevision = nativeRevision;
+                if (_touchState.RequireGeometryRelease(out OpenVrPhoneInputCommand nativeCancel)) { commands[commandCount++] = nativeCancel; }
+            }
             EnsureWorldAnchored();
             OpenVrPhoneInteractionSnapshot previousSnapshot = GetSnapshot();
             validControllerPose = TryGetControllerPose(out controllerPose);
@@ -717,10 +741,12 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
                 validControllerPose, previousSnapshot.Hovered, _grabbed, _recallLifetime.Finishing);
             if (_waitForBindingRelease || OpenVrRuntimeHost.Events.BindingChanging)
             { _activeActionSets[2].nPriority = _activeActionSets[4].nPriority = 0; }
-            // The observer at local priority 1 shares this physical button.
-            // Hidden recall must outrank it without capturing scene input; once
-            // visible, wait for native release before yielding to phone actions.
-            _activeActionSets[5].nPriority = RecallPriority(_menu.PhoneHidden, _menu.DashboardVisible, _recallLifetime.Finishing);
+            // Recall is available at any distance and visibility. Match active
+            // phone sets so their shared button cannot mask the native hold.
+            // Away from a target this stays below the scene-capture threshold.
+            _activeActionSets[5].nPriority = RecallPriority(_menu.PhoneHidden, _menu.DashboardVisible,
+                _recallLifetime.Finishing, Math.Max(_activeActionSets[2].nPriority,
+                    Math.Max(_activeActionSets[3].nPriority, _activeActionSets[4].nPriority)));
             Check(
                 OpenVR.Input.UpdateActionState(
                     _activeActionSets,
@@ -734,6 +760,7 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
                 _waitForBindingRelease = OpenVrRuntimeHost.Events.BindingChanging || _menu.DashboardVisible || !validControllerPose || held;
                 _previousBack = _previousHome = _previousRecents = _previousControlPanel = _previousScreenshot = _previousGrab = false;
                 _pointerRenderer.Hide();
+                _inputEvidence.Observe(new(false, false, false, 0, false, false, InputBlock.BindingWait));
                 Publish(previousSnapshot with
                 {
                     Hovered = false,
@@ -744,18 +771,30 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
                 });
                 goto DispatchCommands;
             }
-            // Read-only mirror of the user's screenshot binding while hidden,
+            // Read-only mirror of the user's screenshot binding at any distance,
             // without enabling off-screen Android actions or input capture.
-            if (_menu.ProcessRecall(ReadDigital(_menuRecallAction)))
+            bool recallPressed = ReadDigital(_menuRecallAction);
+            bool recalled = _menu.ProcessRecall(recallPressed);
+            if (recalled)
             {
                 _recallLifetime.Recalled();
                 if (_grabbed) { QueuePlacement(); }
                 _grabbed = false;
                 _phoneActionsEnabled = false;
                 _phoneActionSetGate.Reset();
+                StopSmoothScroll(commands, ref commandCount);
+                if (_touchState.TryCancel(out OpenVrPhoneInputCommand recallCancel)) { commands[commandCount++] = recallCancel; }
                 _recalledHead = _trackedPoses[OpenVR.k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking;
-                RenderPresentation(sharedInput);
+                try { RenderPresentation(sharedInput, recall: true); }
+                catch
+                {
+                    _inputEvidence.Recall(recallPressed, false, "presentation-failed");
+                    throw;
+                }
             }
+            _inputEvidence.Recall(recallPressed, recalled, recalled ? "recentered" :
+                !_trackedPoses[OpenVR.k_unTrackedDeviceIndex_Hmd].bPoseIsValid ? "hmd-pose-unavailable" :
+                _menu.DashboardVisible ? "dashboard" : !_frameReady || _presentationStopped ? "presentation-not-ready" : "release-required");
             bool rawPhoneInputActive = !_phoneActionsEnabled &&
                 IsDigitalActionActive(_phoneButtonStateAction);
             bool rawPhoneInputPressed = !_phoneActionsEnabled &&
@@ -865,14 +904,18 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
             bool visibleMenuHit = geometricMenuHit && pointerVisible;
             bool beginGroupGrab = OpenVrInteractionGate.CanStartGrab(grab, _previousGrab, _grabbed,
                 hovered || visibleMenuHit, validControllerPose) && !_menu.SuppressPhoneTouch;
-            bool touchAction = ReadDigital(_phoneTouchAction);
+            InputDigitalActionData_t touchData = default;
+            EVRInputError touchError = OpenVR.Input.GetDigitalActionData(_phoneTouchAction, ref touchData,
+                (uint)Marshal.SizeOf<InputDigitalActionData_t>(), _controllerInputSource);
+            bool touchAction = touchError == EVRInputError.None && touchData.bActive && touchData.bState;
             // The observer may dismiss a menu outside our ray, but never activate
             // a control or forward phone input before the regular neutral gate.
             bool menuPressed = touchAction || (!geometricMenuHit && ReadDigital(_menuDismissAction));
             if (beginGroupGrab) { _menu.ResetInput(); }
-            _menu.SetScreenGuard(_screenGuardEnabled, _screenGuardFaulted);
+            int screenGuardState = _screenGuardState;
+            _menu.SetScreenGuard((screenGuardState & 1) != 0, (screenGuardState & 2) != 0);
             OpenVrMenuChange menuChange = beginGroupGrab ? default : _menu.ProcessInput(
-                validRayPose && !_grabbed && (!geometricMenuHit || pointerVisible),
+                !_recallLifetime.Finishing && validRayPose && !_grabbed && (!geometricMenuHit || pointerVisible),
                 visibleMenuHit, visibleMenuHit ? menuHit.Target : OpenVrMenuTarget.None,
                 menuHit.SliderFraction, menuPressed, sharedInput);
             if (menuChange.Playspace is { } request)
@@ -895,9 +938,24 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
                 _phoneActionsEnabled = false;
                 _phoneActionSetGate.Reset();
             }
-            touch = hovered && touchAction && !_menu.SuppressPhoneTouch;
+            if (_touchState.GeometryAwaitingRelease)
+            {
+                InputDigitalActionData_t observer = default;
+                EVRInputError observerError = OpenVR.Input.GetDigitalActionData(_phoneButtonStateAction, ref observer,
+                    (uint)Marshal.SizeOf<InputDigitalActionData_t>(), _controllerInputSource);
+                bool formalAvailable = touchError == EVRInputError.None && touchData.bActive;
+                bool observerAvailable = observerError == EVRInputError.None && observer.bActive;
+                _touchState.ObserveGeometryRelease(_geometryRevision.HasFreshFrame && (formalAvailable || observerAvailable),
+                    (formalAvailable && touchData.bState) || (observerAvailable && observer.bState));
+            }
+            touch = hovered && touchAction && !_menu.SuppressPhoneTouch && !_touchState.GeometryAwaitingRelease;
+            _inputEvidence.Observe(new(_phoneActionsEnabled, touchData.bActive, touchAction, (int)touchError,
+                rawIntersection, pointerVisible, _touchState.GeometryAwaitingRelease ? InputBlock.GeometryWaiting : OpenVrInputEvidence.BlockFor(_menu.DashboardVisible,
+                    _menu.PhoneVisible, validRayPose, _grabbed, menuChange.Consumed || visibleMenuHit,
+                    _menu.SuppressPhoneTouch, rawIntersection, pointerVisible, _phoneActionsEnabled,
+                    touchData.bActive, (int)touchError), rawPhoneInputActive, rawPhoneInputPressed, !_geometryRevision.HasFreshFrame));
 
-            if (hovered && !_menu.SuppressPhoneTouch)
+            if (hovered && !_menu.SuppressPhoneTouch && !_touchState.GeometryAwaitingRelease)
             {
                 float pointerX = Math.Clamp(hit.vUVs.v0, 0, 1);
                 float pointerY = Math.Clamp(1f - hit.vUVs.v1, 0, 1);
@@ -1068,14 +1126,14 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
     DispatchCommands:
         for (int index = 0; index < commandCount; index++)
         {
-            PhoneInputReceived?.Invoke(commands[index]);
+            EmitPhoneInput(commands[index]);
         }
 
         return true;
     }
 
-    internal static int RecallPriority(bool hidden, bool dashboard, bool finishing = false) =>
-        (hidden || finishing) && !dashboard ? 2 : 0;
+    internal static int RecallPriority(bool hidden, bool dashboard, bool finishing = false, int phonePriority = 0) =>
+        dashboard ? 0 : Math.Max(2, phonePriority);
 
     internal static int CapturePriority(bool available, bool validController, bool visibleTarget, bool grabbed, bool finishingRecall = false) =>
         !finishingRecall && available && validController && (visibleTarget || grabbed) ? OpenVR.k_nActionSetOverlayGlobalPriorityMin : 0;
@@ -1480,7 +1538,7 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
         if (_smoothScroll.Cancel(scrollCommands) == 1)
         {
             SmoothScrollCommand command = scrollCommands[0];
-            PhoneInputReceived?.Invoke(new OpenVrPhoneInputCommand(
+            EmitPhoneInput(new OpenVrPhoneInputCommand(
                 command.Kind,
                 command.NormalizedX,
                 command.NormalizedY));
@@ -1511,8 +1569,18 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
     {
         lock (_stateGate)
         {
-            Snapshot = snapshot;
+            Snapshot = snapshot with { InputPath = _inputEvidence.Snapshot(Environment.TickCount64, !snapshot.InputReady) };
         }
+    }
+
+    private void EmitPhoneInput(OpenVrPhoneInputCommand command)
+    {
+        if (command.ScreenWidth < 1 || command.ScreenHeight < 1)
+        { command = command with { ScreenWidth = _touchState.FrameWidth, ScreenHeight = _touchState.FrameHeight }; }
+        command = command with { GeometryRevision = command.GeometryRevision ?? _appliedControlGeometryRevision };
+        _inputEvidence.Emitted(command.Kind);
+        try { PhoneInputReceived?.Invoke(command); }
+        catch { _inputEvidence.SinkFailed(); throw; }
     }
 
     private static void Check(EVRInputError error, string operation)

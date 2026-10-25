@@ -1,9 +1,11 @@
+using VRPhoneScreenOverlay.Contracts;
 using VRPhoneScreenOverlay.SteamVR;
 
 namespace VRPhoneScreenOverlay.Session;
 
 public sealed class PhoneBindingDefaultsService(IBindingDefaultsRestorer defaults, IBindingLiveApplication live)
 {
+    public BindingSnapshotRetentionDiagnostic? RetentionDiagnostic => live.RetentionDiagnostic;
     public PhoneBindingDefaultsService() : this(OpenVrBindingDefaults.CreateDefault(), new OpenVrLiveBindingApplication()) { }
 
     public Task RestoreAsync(CancellationToken token) => RestoreAsync(null, null, token);

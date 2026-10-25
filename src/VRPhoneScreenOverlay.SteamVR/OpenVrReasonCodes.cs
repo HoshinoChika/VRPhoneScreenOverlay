@@ -9,6 +9,7 @@ public static class OpenVrReasonCodes
     public const string PlayspaceWaitingForSteamVr = "OPENVR_PLAYSPACE_WAITING_FOR_STEAMVR";
     public const string StartupConfigured = "OPENVR_STARTUP_CONFIGURED";
     public const string StartupRegistrationFailed = "OPENVR_STARTUP_REGISTRATION_FAILED";
+    public const string StartupRegistrationUnconfirmed = "OPENVR_STARTUP_REGISTRATION_UNCONFIRMED";
     public const string StartupRegistrationTimeout = "OPENVR_STARTUP_REGISTRATION_TIMEOUT";
     /// <summary><c>OPENVR_BINDING_DEFAULT_RESTORE_FAILED</c></summary>
     public const string BindingDefaultRestoreFailed = "OPENVR_BINDING_DEFAULT_RESTORE_FAILED";

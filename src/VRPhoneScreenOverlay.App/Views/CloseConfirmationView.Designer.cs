@@ -8,7 +8,7 @@ partial class CloseConfirmationView
     private SurfacePanel card;
     private Label title;
     private Label description;
-    private TextBox releaseNotes;
+    private RichTextBox releaseNotes;
     private ModernButton minimizeButton;
     private ModernButton exitButton;
     private ModernButton cancelButton;
@@ -24,7 +24,7 @@ partial class CloseConfirmationView
         card = new SurfacePanel();
         title = new Label();
         description = new Label();
-        releaseNotes = new TextBox();
+        releaseNotes = new RichTextBox();
         minimizeButton = new ModernButton();
         exitButton = new ModernButton();
         cancelButton = new ModernButton();
@@ -58,7 +58,8 @@ partial class CloseConfirmationView
         releaseNotes.Size = new Size(540, 140);
         releaseNotes.Multiline = true;
         releaseNotes.ReadOnly = true;
-        releaseNotes.ScrollBars = ScrollBars.Vertical;
+        releaseNotes.ScrollBars = RichTextBoxScrollBars.ForcedVertical;
+        releaseNotes.DetectUrls = false;
         releaseNotes.BorderStyle = BorderStyle.None;
         releaseNotes.BackColor = UiPalette.SurfaceRaised;
         releaseNotes.ForeColor = UiPalette.TextPrimary;

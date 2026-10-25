@@ -48,7 +48,7 @@ public sealed class SteamVrBindingNotice : Panel
             Location = new Point(370, 36),
             Size = new Size(210, 30),
             Icon = UiIcons.Undo,
-            Text = "重新加载本地绑定",
+            Text = "重新加载绑定",
             Margin = new Padding(0),
             Visible = false,
         };
@@ -91,11 +91,11 @@ public sealed class SteamVrBindingNotice : Panel
             failed ? UiPalette.Danger : UiPalette.TextPrimary);
         SetControlText(
             _title,
-            connectionIssue ? "SteamVR连接超时" : failed ? "SteamVR 手柄绑定加载失败" : "正在加载 SteamVR 手柄绑定…");
+            connectionIssue ? "SteamVR 连接异常" : failed ? "SteamVR 手柄绑定加载失败" : "正在加载 SteamVR 手柄绑定…");
         SetControlText(
             _message,
             failed && !connectionIssue
-                ? "绑定加载失败。请先关闭桌面的 SteamVR 绑定页面，再重新加载本地绑定。"
+                ? "绑定加载失败。请先关闭桌面的 SteamVR 绑定页面，再重新加载绑定。"
                 : message);
         _reloadButton.Visible = failed && !connectionIssue;
     }

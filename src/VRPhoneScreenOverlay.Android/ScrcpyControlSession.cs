@@ -12,20 +12,35 @@ internal sealed class ScrcpyControlSession(
 {
     private readonly ScrcpyTransportLease _transport = transport;
     private readonly ScrcpyControlProtocolWriter _protocol = protocol;
-    private readonly AndroidDisplaySize _displaySize = displaySize;
+    private ControlGeometryWriter? _geometry;
     private readonly IAndroidConnectionLogSink _log = log;
     private long _commandCount;
     private long _moveCount;
     private bool _disposed;
     private bool _displayPowerOff;
+    private int _aborted;
+
+    public void AbortPendingOperations()
+    {
+        if (Interlocked.Exchange(ref _aborted, 1) == 0) { _transport.AbortStream(); }
+    }
 
     public string DeviceKey { get; } = deviceKey;
+    public ServerOutputDiagnostic ServerOutput => _transport.ServerOutput;
+    public bool SupportsGeometryRefresh => true;
+    public ControlGeometryDiagnostic? Geometry => Volatile.Read(ref _geometry)?.Snapshot;
 
     public async ValueTask SendAsync(
         PhoneInputCommand command,
         CancellationToken cancellationToken)
+        => _ = await SendWithResultAsync(command, cancellationToken).ConfigureAwait(false);
+
+    public async ValueTask<PhoneInputWriteResult> SendWithResultAsync(
+        PhoneInputCommand command, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (Volatile.Read(ref _aborted) != 0)
+        { throw new AndroidConnectionException(AndroidReasonCodes.ControlChannelAborted, "手机控制通道已中止，请重新连接"); }
         if (_transport.HasServerExited)
         {
             throw new AndroidConnectionException(
@@ -33,10 +48,12 @@ internal sealed class ScrcpyControlSession(
                 "手机控制服务已经停止");
         }
 
+        PhoneInputWriteResult delivery;
         try
         {
-            PhoneInputCommand mapped = _displaySize.Map(command);
-            await _protocol.WriteAsync(mapped, cancellationToken).ConfigureAwait(false);
+            if (_geometry is null) { Volatile.Write(ref _geometry, new(displaySize, ReadDisplaySizeAsync, _protocol.WriteAsync)); }
+            delivery = await _geometry.SendAsync(command, cancellationToken).ConfigureAwait(false);
+            if (!delivery.Written) { return delivery; }
             if (command.Kind is PhoneInputCommandKind.TurnDisplayOff or PhoneInputCommandKind.MaintainDisplayOff or
                 PhoneInputCommandKind.WakeScreenWhileDisplayOff or PhoneInputCommandKind.RestoreDisplayPower or PhoneInputCommandKind.WakeScreen)
             {
@@ -50,19 +67,21 @@ internal sealed class ScrcpyControlSession(
         }
         catch (Exception exception) when (exception is IOException or SocketException)
         {
+            AbortPendingOperations();
             throw new AndroidConnectionException(
                 AndroidReasonCodes.ControlWriteFailed,
-                "手机控制指令发送失败");
+                "手机控制指令发送失败", exception);
         }
+        catch (OperationCanceledException) { AbortPendingOperations(); throw; }
 
         _commandCount++;
         // Periodic guard/activity traffic is counted, not logged ten times a second.
         if (command.Kind is PhoneInputCommandKind.MaintainDisplayOff or
-            PhoneInputCommandKind.WakeScreenWhileDisplayOff or PhoneInputCommandKind.UserActivity) { return; }
+                PhoneInputCommandKind.WakeScreenWhileDisplayOff or PhoneInputCommandKind.UserActivity) { return delivery; }
         if (command.Kind == PhoneInputCommandKind.PointerMove)
         {
             _moveCount++;
-            return;
+            return delivery;
         }
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -77,6 +96,24 @@ internal sealed class ScrcpyControlSession(
                 (long)(now - command.CreatedAt).TotalMilliseconds),
             CommandSequence: command.Sequence,
             CommandKind: command.Kind.ToString()));
+        return delivery;
+    }
+
+    private async ValueTask<AndroidDisplaySize> ReadDisplaySizeAsync(CancellationToken token)
+    {
+        AdbCommandResult result = await _transport.RunDeviceCommandAsync(["shell", "wm", "size"], TimeSpan.FromSeconds(1), token).ConfigureAwait(false);
+        if (!result.Succeeded || !AndroidDisplaySize.TryParseWmSize(result.StandardOutput, out AndroidDisplaySize size))
+        {
+            _log.TryWrite(new(DateTimeOffset.UtcNow, "control_geometry", "ANDROID_CONTROL_DISPLAY_REFRESH_FAILED",
+                "手机显示尺寸未能重新确认，已停止本通道触控", DeviceKey)
+            { AdbCommand = result.Diagnostic });
+            throw new AndroidConnectionException(result.TimedOut ? "ANDROID_CONTROL_DISPLAY_REFRESH_TIMEOUT" :
+                "ANDROID_CONTROL_DISPLAY_REFRESH_FAILED", "手机显示尺寸暂未确认，坐标输入已暂停")
+            { CommandDiagnostic = result.Diagnostic };
+        }
+        AdbCommandResult rotation = await _transport.RunDeviceCommandAsync(["shell", "dumpsys", "-t", "1", "display"], TimeSpan.FromMilliseconds(500), token).ConfigureAwait(false);
+        (int? value, string status) = rotation.Succeeded ? AndroidDisplayRotation.Parse(rotation.StandardOutput) : (null, "command-failed");
+        return size with { Rotation = value, RotationStatus = status };
     }
 
     private async ValueTask SendAndroidWakeKeyAsync(CancellationToken cancellationToken)
@@ -98,18 +135,23 @@ internal sealed class ScrcpyControlSession(
                         : AndroidReasonCodes.WakeKeyFailed,
                     "scrcpy 唤醒指令已发送，但 Android 唤醒键发送失败",
                     DeviceKey,
-                    DurationMilliseconds: (long)result.Duration.TotalMilliseconds));
+                    DurationMilliseconds: (long)result.Duration.TotalMilliseconds)
+                { AdbCommand = result.Diagnostic });
             }
         }
         catch (Exception exception) when (
-            exception is IOException or InvalidOperationException)
+            exception is IOException or InvalidOperationException or AndroidConnectionException or System.ComponentModel.Win32Exception)
         {
             _log.TryWrite(new AndroidConnectionLogEntry(
                 DateTimeOffset.UtcNow,
                 "control_wake_fallback",
                 AndroidReasonCodes.WakeKeyFailed,
                 "scrcpy 唤醒指令已发送，但 Android 唤醒键发送失败",
-                DeviceKey));
+                DeviceKey)
+            {
+                AdbCommand = AdbDiagnosticPolicy.Describe(["shell", "input", "keyevent"], "wake-fallback") with
+                { ExceptionType = exception.GetType().FullName, HResult = exception.HResult, ErrorCategory = "wake-fallback-failed" }
+            });
         }
     }
 
@@ -121,7 +163,7 @@ internal sealed class ScrcpyControlSession(
         }
 
         _disposed = true;
-        if (_displayPowerOff && !_transport.HasServerExited)
+        if (_displayPowerOff && Volatile.Read(ref _aborted) == 0 && !_transport.HasServerExited)
         {
             using CancellationTokenSource restore = new(TimeSpan.FromSeconds(2));
             try

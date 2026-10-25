@@ -13,6 +13,31 @@ internal sealed class OpenVrPhoneTouchState
     private long _lastMoveTimestamp;
 
     public bool IsDown { get; private set; }
+    public int FrameWidth { get; private set; }
+    public int FrameHeight { get; private set; }
+    public bool GeometryAwaitingRelease { get; private set; }
+
+    public bool TrySetGeometry(int width, int height, out OpenVrPhoneInputCommand cancel)
+    {
+        cancel = default;
+        if (width < 1 || height < 1 || (FrameWidth == width && FrameHeight == height)) { return false; }
+        bool changed = FrameWidth > 0;
+        bool cancelled = changed && RequireGeometryRelease(out cancel);
+        FrameWidth = width; FrameHeight = height;
+        return cancelled;
+    }
+
+    public bool RequireGeometryRelease(out OpenVrPhoneInputCommand cancel)
+    {
+        GeometryAwaitingRelease = true;
+        return TryCancel(out cancel);
+    }
+
+    public void ObserveGeometryRelease(bool actionAvailable, bool pressed)
+    {
+        if (GeometryAwaitingRelease && actionAvailable && !pressed)
+        { GeometryAwaitingRelease = false; _previousTouch = false; }
+    }
 
     public bool TryUpdate(
         bool touch,
@@ -21,6 +46,7 @@ internal sealed class OpenVrPhoneTouchState
         long timestamp,
         out OpenVrPhoneInputCommand command)
     {
+        if (GeometryAwaitingRelease) { command = default; return false; }
         if (touch && !_previousTouch && !IsDown)
         {
             IsDown = true;
@@ -33,7 +59,8 @@ internal sealed class OpenVrPhoneTouchState
             command = new OpenVrPhoneInputCommand(
                 PhoneInputCommandKind.PointerDown,
                 pointerX,
-                pointerY);
+                pointerY)
+            { ScreenWidth = FrameWidth, ScreenHeight = FrameHeight };
             return true;
         }
 
@@ -44,7 +71,8 @@ internal sealed class OpenVrPhoneTouchState
             command = new OpenVrPhoneInputCommand(
                 PhoneInputCommandKind.PointerUp,
                 releaseX,
-                releaseY);
+                releaseY)
+            { ScreenWidth = FrameWidth, ScreenHeight = FrameHeight };
             ResetPointer(releaseX, releaseY);
             return true;
         }
@@ -70,7 +98,8 @@ internal sealed class OpenVrPhoneTouchState
             command = new OpenVrPhoneInputCommand(
                 PhoneInputCommandKind.PointerMove,
                 pointerX,
-                pointerY);
+                pointerY)
+            { ScreenWidth = FrameWidth, ScreenHeight = FrameHeight };
             _lastX = pointerX;
             _lastY = pointerY;
             _lastMoveTimestamp = timestamp;
@@ -102,7 +131,7 @@ internal sealed class OpenVrPhoneTouchState
             return false;
         }
 
-        command = new OpenVrPhoneInputCommand(kind, _lastX, _lastY);
+        command = new OpenVrPhoneInputCommand(kind, _lastX, _lastY) { ScreenWidth = FrameWidth, ScreenHeight = FrameHeight };
         ResetPointer(_lastX, _lastY);
         return true;
     }

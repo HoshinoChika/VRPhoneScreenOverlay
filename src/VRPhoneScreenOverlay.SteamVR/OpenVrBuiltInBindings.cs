@@ -128,9 +128,9 @@ internal static class OpenVrBuiltInBindings
                   { "path": "/user/hand/right/input/trackpad", "mode": "trackpad", "inputs": {
                     "position": { "output": "/actions/main/in/phoneoverlayscale" }
                   } },
-                  { "path": "/user/hand/right/input/trigger", "mode": "trigger", "inputs": {
+                  { "path": "/user/hand/right/input/trigger", "mode": "button", "inputs": {
                     "click": { "output": "/actions/main/in/phoneoverlaytouch" }
-                  } },
+                  }, "parameters": { "click_activate_threshold": "0.65", "click_deactivate_threshold": "0.6" } },
                   { "path": "/user/hand/right/input/grip", "mode": "button", "inputs": {
                     "click": { "output": "/actions/main/in/phoneoverlaygrab" }
                   } }
@@ -166,7 +166,7 @@ internal static class OpenVrBuiltInBindings
                     "click": { "output": "/actions/main/in/phonerecents" },
                     "long": { "output": "/actions/main/in/phonecontrolpanel" }
                   }, "parameters": { "long_press_delay": 0.65, "long_press_expiry": 3 } },
-                  { "path": "/user/hand/right/input/trigger", "mode": "trigger", "inputs": {
+                  { "path": "/user/hand/right/input/trigger", "mode": "button", "inputs": {
                     "click": { "output": "/actions/main/in/phoneoverlaytouch" }
                   } },
                   { "path": "/user/hand/right/input/grip", "mode": "button", "inputs": {
@@ -208,9 +208,9 @@ internal static class OpenVrBuiltInBindings
                     "click": { "output": "/actions/main/in/phonerecents" },
                     "long": { "output": "/actions/main/in/phonecontrolpanel" }
                   }, "parameters": { "long_press_delay": 0.65, "long_press_expiry": 3 } },
-                  { "path": "/user/hand/right/input/trigger", "mode": "trigger", "inputs": {
+                  { "path": "/user/hand/right/input/trigger", "mode": "button", "inputs": {
                     "click": { "output": "/actions/main/in/phoneoverlaytouch" }
-                  } },
+                  }, "parameters": { "click_activate_threshold": "0.65", "click_deactivate_threshold": "0.6" } },
                   { "path": "/user/hand/right/input/grip", "mode": "button", "inputs": {
                     "click": { "output": "/actions/main/in/phoneoverlaygrab" }
                   }, "parameters": {
@@ -255,9 +255,9 @@ internal static class OpenVrBuiltInBindings
                     "click": { "output": "/actions/main/in/phonerecents" },
                     "long": { "output": "/actions/main/in/phonecontrolpanel" }
                   }, "parameters": { "long_press_delay": 0.65, "long_press_expiry": 3 } },
-                  { "path": "/user/hand/right/input/trigger", "mode": "trigger", "inputs": {
+                  { "path": "/user/hand/right/input/trigger", "mode": "button", "inputs": {
                     "click": { "output": "/actions/main/in/phoneoverlaytouch" }
-                  } },
+                  }, "parameters": { "click_activate_threshold": "0.65", "click_deactivate_threshold": "0.6" } },
                   { "path": "/user/hand/right/input/grip", "mode": "trigger", "inputs": {
                     "click": { "output": "/actions/main/in/phoneoverlaygrab" }
                   } },

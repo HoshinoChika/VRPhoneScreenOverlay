@@ -100,15 +100,15 @@
         "dependencies": {
           "Concentus": "[2.2.2, )",
           "NAudio": "[3.0.0, )",
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
           "Vortice.MediaFoundation": "[3.8.3, )"
         }
       },
       "vrphonescreenoverlay.network": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.7, )",
-          "VRPhoneScreenOverlay.Protocols": "[0.2.7, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Protocols": "[0.2.8, )"
         }
       },
       "vrphonescreenoverlay.protocols": {

@@ -209,6 +209,7 @@ public sealed class HttpUpdateService : IUpdateService
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(update);
         ArgumentOutOfRangeException.ThrowIfLessThan(currentProcessId, 1);
+        UpdateInstallAvailability.EnsureAvailable(update.InstallDirectory);
         ProcessStartInfo startInfo = new()
         {
             FileName = update.MaintenanceRunnerPath,
@@ -301,7 +302,7 @@ public sealed class HttpUpdateService : IUpdateService
 public sealed class UpdateException(
     string reasonCode,
     string message,
-    Exception? inner = null) : Exception(message, inner)
+    Exception? inner = null) : Exception(message, inner), VRPhoneScreenOverlay.Contracts.IReasonCoded
 {
     public string ReasonCode { get; } = reasonCode;
 }

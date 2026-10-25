@@ -14,7 +14,10 @@ internal sealed record DiagnosticContextInput(
     PhoneAudioSnapshot Audio, PhoneAudioSnapshot AudioDiagnostics, PhoneControlSnapshot Control,
     PhoneControlSnapshot ControlDiagnostics, OpenVrPlayspaceDragSnapshot Playspace,
     OpenVrBindingPreparationSnapshot Binding, DiagnosticUpdateState Update, DiagnosticUserReport UserReport,
-    string? LogPath);
+    string? LogPath, VideoTrialSnapshot? VideoTrials = null, bool? VideoAutomaticStartAllowed = null,
+    VideoRecoveryCandidate? VideoRecovery = null, IReadOnlyList<BindingSnapshotRetentionDiagnostic>? BindingSnapshotRetention = null,
+    SteamVrStartupStatus? SteamVrStartup = null, IReadOnlyList<PhoneControlFailureDiagnostic>? ControlFailures = null,
+    PhoneStartupDiagnostic? Startup = null);
 
 /// <summary>Privacy allowlist mapping from immutable snapshots, without UI controls or device calls.</summary>
 internal static class DiagnosticContextBuilder
@@ -23,7 +26,6 @@ internal static class DiagnosticContextBuilder
     {
         AppSettings settings = input.Settings;
         AndroidConnectionSnapshot android = input.Android;
-        AndroidDeviceDetails? device = android.SelectedDevice;
         PhoneMediaSessionSnapshot media = input.Media;
         PhoneOverlaySnapshot video = input.Video;
         PhoneOverlaySnapshot videoDiagnostics = input.VideoDiagnostics;
@@ -39,6 +41,12 @@ internal static class DiagnosticContextBuilder
             new Dictionary<string, object?>
             {
                 ["appState"] = input.Runtime.State.ToString(),
+                ["startup"] = input.Startup,
+                ["playspaceEnabled"] = playspace.Enabled,
+                ["playspaceReason"] = playspace.ReasonCode,
+                ["playspaceMultiplier"] = playspace.Multiplier,
+                ["playspaceInertiaEnabled"] = playspace.FlingEnabled,
+                ["steamVrStartup"] = input.SteamVrStartup,
                 ["androidState"] = android.State.ToString(),
                 ["androidReason"] = android.ReasonCode,
                 ["videoState"] = video.State.ToString(),
@@ -47,9 +55,22 @@ internal static class DiagnosticContextBuilder
                 ["audioReason"] = audio.ReasonCode,
                 ["controlState"] = control.State.ToString(),
                 ["controlReason"] = control.ReasonCode,
+                ["controlDispatch"] = control.Dispatch,
+                ["lastControlDispatch"] = controlDiagnostics.Dispatch,
+                ["controlServerOutput"] = control.ServerOutput,
+                ["lastControlServerOutput"] = controlDiagnostics.ServerOutput,
+                ["controlGeometry"] = control.Geometry,
+                ["lastControlGeometry"] = controlDiagnostics.Geometry,
+                ["controlFailureHistory"] = input.ControlFailures,
+                ["controlExecutionAcknowledgement"] = "not-provided-by-protocol",
+                ["inputPath"] = video.InputPath,
+                ["lastInputPath"] = videoDiagnostics.InputPath,
+                ["inputRouting"] = video.InputRouting,
+                ["lastInputRouting"] = videoDiagnostics.InputRouting,
                 ["playspaceState"] = playspace.State.ToString(),
                 ["steamVrInputReady"] = video.SteamVrInputReady,
                 ["bindingState"] = video.BindingState.ToString(),
+                ["bindingSnapshotRetention"] = input.BindingSnapshotRetention,
                 ["lastUpdateCheckAt"] = input.Update.CheckedAt,
                 ["lastUpdateReason"] = input.Update.Reason,
                 ["lastUpdateFailureKind"] = input.Update.FailureKind,
@@ -64,6 +85,9 @@ internal static class DiagnosticContextBuilder
                 ["resolutionPercent"] = settings.VideoResolutionPercent,
                 ["bitrateMbps"] = settings.VideoBitrateMbps,
                 ["maximumFps"] = settings.VideoMaximumFramesPerSecond,
+                ["videoTrials"] = input.VideoTrials,
+                ["videoAutomaticStartAllowed"] = input.VideoAutomaticStartAllowed,
+                ["videoRecoveryCandidate"] = input.VideoRecovery,
                 ["keepAwakeWhileGrabbed"] = settings.KeepAwakeWhileGrabbed,
                 ["vrUnlockKeypadEnabled"] = settings.VrUnlockKeypadEnabled,
                 ["updateChannel"] = "Beta",
@@ -73,22 +97,7 @@ internal static class DiagnosticContextBuilder
                 ["playspaceFriction"] = settings.PlayspaceFriction,
                 ["playspaceResetAllOffsets"] = settings.PlayspaceResetAllOffsets,
             },
-            new DiagnosticHardwareSummary(
-                device?.Manufacturer,
-                device?.Brand,
-                device?.Model,
-                device?.DeviceCodeName,
-                device?.AndroidVersion,
-                device?.AndroidSdk,
-                device?.CpuAbi,
-                device?.Transport.ToString(),
-                device?.NativeDisplayWidth ?? 0,
-                device?.NativeDisplayHeight ?? 0,
-                videoDiagnostics.VideoDecoderBackend,
-                videoDiagnostics.GraphicsAdapterBackend,
-                videoDiagnostics.OpenVrGraphicsAdapterLuid,
-                videoDiagnostics.HeadsetModel,
-                videoDiagnostics.ControllerType),
+            CreateHardware(android, videoDiagnostics),
             new DiagnosticSessionSummary(
                 DateTimeOffset.UtcNow,
                 media.State.ToString(),
@@ -153,5 +162,20 @@ internal static class DiagnosticContextBuilder
                 videoDiagnostics.ScaleActive),
             userReport,
             input.LogPath);
+    }
+
+    public static DiagnosticHardwareObservation ObserveHardware(AndroidConnectionSnapshot android,
+        PhoneOverlaySnapshot currentVideo, PhoneOverlaySnapshot diagnosticVideo) =>
+        new(DateTimeOffset.UtcNow, "sampled", android.IsReady, currentVideo.State == PhoneOverlayState.Running,
+            CreateHardware(android, diagnosticVideo));
+
+    private static DiagnosticHardwareSummary CreateHardware(AndroidConnectionSnapshot android, PhoneOverlaySnapshot video)
+    {
+        AndroidDeviceDetails? device = android.SelectedDevice;
+        return new(device?.Manufacturer, device?.Brand, device?.Model, device?.DeviceCodeName,
+            device?.AndroidVersion, device?.AndroidSdk, device?.CpuAbi, device?.Transport.ToString(),
+            device?.NativeDisplayWidth ?? 0, device?.NativeDisplayHeight ?? 0,
+            video.VideoDecoderBackend, video.GraphicsAdapterBackend, video.OpenVrGraphicsAdapterLuid,
+            video.HeadsetModel, video.ControllerType);
     }
 }

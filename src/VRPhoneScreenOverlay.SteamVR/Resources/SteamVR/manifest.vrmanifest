@@ -6,6 +6,7 @@
       "launch_type": "binary",
       "is_dashboard_overlay": true,
       "binary_path_windows": "VRPhoneScreenOverlay.exe",
+      "arguments": "--steamvr-launch",
       "action_manifest_path": "action_manifest.json",
       "strings": {
         "en_us": {
