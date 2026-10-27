@@ -10,7 +10,7 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 
 **[下载方式](#下载) · [使用方法](#开始使用)**
 
-正式下载 **0.2.7** · 本源码为 **0.2.8 候选版，待验收** · 解压即用
+当前公开版本 **0.2.8** · 已验收并正式发布 · 解压即用
 
 <img src="docs/assets/vr-preview.jpg" width="960" alt="SteamVR 中的手机浮窗和手柄射线">
 
@@ -41,9 +41,13 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 
 ## 下载
 
-**[GitHub 下载](https://github.com/HoshinoChika/VRPhoneScreenOverlay/releases/latest)**，或到[官网下载页](https://hoshinochika.com/vrpso/download/)下载。
+**[GitHub 下载 0.2.8](https://github.com/HoshinoChika/VRPhoneScreenOverlay/releases/tag/v0.2.8)**，或到[官网下载页](https://hoshinochika.com/vrpso/download/)下载。
 
 下载 Windows x64 ZIP，解压后运行 `VRPhoneScreenOverlay.exe`。
+
+**升级提醒：通过软件内更新到 0.2.8 会覆盖原有手柄自定义绑定，更新后需要重新设置。** 完整公告见 [0.2.8 更新公告](docs/release-notes/0.2.8.txt)。如遇兼容性问题，可在官网下载页选择历史版本 0.2.7。
+
+GitHub Release、官网下载和应用内更新均已开放 0.2.8。现有客户端使用名为 `beta` 的更新通道，该名称不表示仅限内部验收；GitHub Release 公开状态与应用内更新清单独立管理。
 
 ## 使用要求
 
