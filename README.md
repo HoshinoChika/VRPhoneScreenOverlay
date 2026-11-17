@@ -12,7 +12,7 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 
 **[官网下载](https://hoshinochika.com/vrpso/download/) · [GitHub 下载](https://github.com/HoshinoChika/VRPhoneScreenOverlay/releases/latest) · [使用教程](https://hoshinochika.com/vrpso/guide/)**
 
-<img src="docs/assets/vr-preview.jpg" width="960" alt="SteamVR 中的手机浮窗和手柄射线">
+<img src="docs/assets/ui-home-0.3.0.png" width="960" alt="0.3.0 软件主界面快照">
 
 </div>
 
@@ -33,12 +33,12 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 
 <table>
 <tr>
-<td width="50%"><img src="docs/assets/main-window.jpg" alt="0.3.0 主界面示例"><br><b>主界面</b> · 查看连接与运行状态</td>
-<td width="50%"><img src="docs/assets/video-settings.jpg" alt="0.3.0 画面设置示例"><br><b>画面设置</b> · 调整画质</td>
+<td width="50%"><img src="docs/assets/ui-connection-0.3.0.png" alt="0.3.0 连接管理快照"><br><b>连接管理</b> · 选择手机与连接方式</td>
+<td width="50%"><img src="docs/assets/ui-video-0.3.0.png" alt="0.3.0 画面设置示例"><br><b>画面设置</b> · 调整画质</td>
 </tr>
 </table>
 
-上方为 VR 实景，桌面图片为 0.3.0 界面示例。点击图片可查看原图。
+图片由 0.3.0 软件快照模式生成，点击可查看完整界面。
 
 ## 下载与更新
 
