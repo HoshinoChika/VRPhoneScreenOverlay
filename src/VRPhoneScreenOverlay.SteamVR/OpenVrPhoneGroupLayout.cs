@@ -2,7 +2,7 @@ using Valve.VR;
 
 namespace VRPhoneScreenOverlay.SteamVR;
 
-internal enum OpenVrPhoneSurface { Phone, Dot, Menu, Keypad }
+internal enum OpenVrPhoneSurface { Phone, Dot, Menu, Keypad, TranslationButton, TranslationPanel, ClipboardButton, ClipboardPanel, ScreenshotButton }
 
 // Components share a rigid group pose. Only the phone's dimensions depend on
 // scale; the controls retain their physical sizes and follow its edge layout.
@@ -16,9 +16,29 @@ internal static class OpenVrPhoneGroupLayout
         {
             OpenVrPhoneSurface.Dot => dot,
             OpenVrPhoneSurface.Menu => OpenVrPhoneMenuLayout.PanelTransform(dot),
+            OpenVrPhoneSurface.TranslationPanel => TranslationPanelPose(dot),
+            OpenVrPhoneSurface.ClipboardPanel => TranslationPanelPose(dot),
+            OpenVrPhoneSurface.ScreenshotButton => TranslationButtonPose(TranslationButtonPose(TranslationButtonPose(dot))),
+            OpenVrPhoneSurface.ClipboardButton => TranslationButtonPose(TranslationButtonPose(dot)),
+            OpenVrPhoneSurface.TranslationButton => TranslationButtonPose(dot),
             OpenVrPhoneSurface.Keypad => OpenVrPhoneMenuLayout.KeypadTransform(root, phoneWidth, aspect),
             _ => root,
         };
+    }
+
+    private static HmdMatrix34_t TranslationButtonPose(HmdMatrix34_t dot)
+    {
+        HmdMatrix34_t offset = OpenVrTransformMath.Identity();
+        offset.m7 = -(OpenVrPhoneMenuLayout.DotWidth + OpenVrPhoneMenuLayout.ControlGap);
+        return OpenVrTransformMath.Multiply(dot, offset);
+    }
+
+    private static HmdMatrix34_t TranslationPanelPose(HmdMatrix34_t dot)
+    {
+        HmdMatrix34_t offset = OpenVrTransformMath.Identity();
+        offset.m3 = OpenVrPhoneMenuLayout.DotWidth / 2 + OpenVrPhoneMenuLayout.ControlGap + OpenVrTranslationChannel.WidthMeters / 2;
+        offset.m7 = OpenVrPhoneMenuLayout.DotWidth / 2 - OpenVrTranslationChannel.WidthMeters / OpenVrTranslationChannel.Aspect / 2;
+        return OpenVrTransformMath.Multiply(dot, offset);
     }
 
     public static HmdVector3_t Point(OpenVrPhoneSurface surface, HmdMatrix34_t root, float phoneWidth,
@@ -27,7 +47,12 @@ internal static class OpenVrPhoneGroupLayout
         HmdMatrix34_t pose = SurfacePose(surface, root, phoneWidth, aspect, hidden);
         (float width, float height) = surface switch
         {
+            OpenVrPhoneSurface.ScreenshotButton => (OpenVrPhoneMenuLayout.DotWidth, OpenVrPhoneMenuLayout.DotWidth),
             OpenVrPhoneSurface.Dot => (OpenVrPhoneMenuLayout.DotWidth, OpenVrPhoneMenuLayout.DotWidth),
+            OpenVrPhoneSurface.TranslationButton => (OpenVrPhoneMenuLayout.DotWidth, OpenVrPhoneMenuLayout.DotWidth),
+            OpenVrPhoneSurface.ClipboardButton => (OpenVrPhoneMenuLayout.DotWidth, OpenVrPhoneMenuLayout.DotWidth),
+            OpenVrPhoneSurface.ClipboardPanel => (OpenVrTranslationChannel.WidthMeters, OpenVrTranslationChannel.WidthMeters / OpenVrTranslationChannel.Aspect),
+            OpenVrPhoneSurface.TranslationPanel => (OpenVrTranslationChannel.WidthMeters, OpenVrTranslationChannel.WidthMeters / OpenVrTranslationChannel.Aspect),
             OpenVrPhoneSurface.Menu => (OpenVrPhoneMenuLayout.PanelWidth, OpenVrPhoneMenuLayout.PanelWidth / OpenVrPhoneMenuLayout.PanelAspect),
             OpenVrPhoneSurface.Keypad => (OpenVrPhoneMenuLayout.KeypadWidth, OpenVrPhoneMenuLayout.KeypadWidth / OpenVrPhoneMenuLayout.KeypadAspect),
             _ => (phoneWidth, phoneWidth / aspect),

@@ -10,7 +10,7 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 
 **[下载方式](#下载) · [使用方法](#开始使用)**
 
-当前公开版本 **0.2.8** · 已验收并正式发布 · 解压即用
+正式下载 **0.2.7** · 本源码为 **0.2.8 候选版，待验收** · 解压即用
 
 <img src="docs/assets/vr-preview.jpg" width="960" alt="SteamVR 中的手机浮窗和手柄射线">
 
@@ -28,7 +28,7 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 | 空间拖拽 | 可选功能，提供惯性、重力等设置。 |
 | 手柄绑定 | 按手柄显示操作说明，可修改 SteamVR 绑定；保存后实时应用。 |
 | PICO 麦克风 | 可选开启麦克风延迟改善功能。 |
-| DeepSeek 辅助排障（0.2.8） | 根据问题描述、日志、现场检查及对应源码给出诊断建议，可查看历史；不修改代码或安装补丁。 |
+| 故障诊断 | 开发版提供常驻运行记录、自动本地故障采集和转储导出；已发布的 0.2.8 暂时保留原 DeepSeek 辅助排障服务。 |
 
 <table>
 <tr>
@@ -41,13 +41,9 @@ Windows x64 · SteamVR · Android · USB / 无线连接
 
 ## 下载
 
-**[GitHub 下载 0.2.8](https://github.com/HoshinoChika/VRPhoneScreenOverlay/releases/tag/v0.2.8)**，或到[官网下载页](https://hoshinochika.com/vrpso/download/)下载。
+**[GitHub 下载](https://github.com/HoshinoChika/VRPhoneScreenOverlay/releases/latest)**，或到[官网下载页](https://hoshinochika.com/vrpso/download/)下载。
 
 下载 Windows x64 ZIP，解压后运行 `VRPhoneScreenOverlay.exe`。
-
-**升级提醒：通过软件内更新到 0.2.8 会覆盖原有手柄自定义绑定，更新后需要重新设置。** 完整公告见 [0.2.8 更新公告](docs/release-notes/0.2.8.txt)。如遇兼容性问题，可在官网下载页选择历史版本 0.2.7。
-
-GitHub Release、官网下载和应用内更新均已开放 0.2.8。现有客户端使用名为 `beta` 的更新通道，该名称不表示仅限内部验收；GitHub Release 公开状态与应用内更新清单独立管理。
 
 ## 使用要求
 
@@ -110,3 +106,9 @@ GitHub Release、官网下载和应用内更新均已开放 0.2.8。现有客户
 [第三方说明](THIRD_PARTY.md)
 
 项目采用 [GPL-3.0](LICENSE)，第三方组件遵循各自许可证。
+
+### 开发版自动故障记录（尚未正式发布）
+
+软件启动后自动在本机记录故障证据，覆盖启动过程和整个运行期，不需要用户提前开启或等待复现再采集。异常或长时间无响应时按配额保存转储；普通日志和有界时间线也会持续记录。
+
+转储可能含内存隐私，默认仅保存在本机。点击上传诊断包后，会询问是否附带最近6小时的故障内存现场，并在采集器可用时补充当前现场；默认关闭，每次单独确认。“关于 → 上传问题诊断包”中的控制用于停止记录或手动导出已有资料，不是启用诊断的必经步骤。诊断资料只在用户手动确认上传后发送，不自动上报；线上已发布版本的服务保持不变。

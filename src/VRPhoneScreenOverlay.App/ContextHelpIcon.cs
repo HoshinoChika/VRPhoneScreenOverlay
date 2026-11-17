@@ -70,6 +70,8 @@ public sealed class ContextHelpIcon : Control
         _aligning = true;
         try
         {
+            // This position follows the label, never the module's right edge.
+            Anchor = AnchorStyles.Top | AnchorStyles.Left;
             int width = TextRenderer.MeasureText(_targetLabel.Text, _targetLabel.Font, Size.Empty,
                 TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width;
             _targetLabel.TextAlign = ContentAlignment.MiddleLeft;

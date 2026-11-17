@@ -8,9 +8,29 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--diagnostic-capture")
+        {
+            return Diagnostics.DiagnosticCaptureObserver.Run(args);
+        }
+
         if (args.Length > 0 && args[0] == "--diagnostic-monitor")
         {
             return Diagnostics.IncidentExitMonitor.Run(args);
+        }
+
+        if (args.Length == 1 && args[0] == "--recover-update")
+        {
+            try
+            {
+                using UpdateRecoveryJournal recovery = UpdateRecoveryJournal.Open(RunnerDirectory());
+                recovery.Recover(NoApplicationRunning);
+                // Windows removes the !RunOnce value after execution. Do not rewrite
+                // RunOnce from inside its callback; leave a failed journal for retry.
+                return 0;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or
+                ArgumentException or JsonException or System.ComponentModel.Win32Exception)
+            { return 4; }
         }
 
         if (!args.Contains("--apply-update", StringComparer.Ordinal))
@@ -24,7 +44,7 @@ internal static class Program
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or
-                InvalidOperationException or ArgumentException or JsonException)
+                InvalidOperationException or ArgumentException or JsonException or System.Security.SecurityException)
         {
             return 3;
         }
@@ -33,6 +53,9 @@ internal static class Program
     private static int ApplyUpdate(UpdateArguments update)
     {
         ValidatePaths(update);
+        string expectedVersion = UpdateHealthConfirmation.ExpectedVersion(update.StageDirectory);
+        using UpdateRecoveryJournal? journal = PrepareRecoveryOrRestart(update);
+        if (journal is null) { return 4; }
         WaitForParent(update.ParentProcessId);
         try { Update.UpdateInstallAvailability.EnsureAvailable(update.InstallDirectory); }
         catch (Update.UpdateException exception)
@@ -40,12 +63,14 @@ internal static class Program
             // A client may appear after the in-app preflight. Leave the install intact
             // and reopen it with an inline recovery notice instead of killing its server.
             using Process restored = StartApplication(update.InstallDirectory, null, null, sharedAdbBlockedReason: exception.ReasonCode);
+            journal.Finish();
+            UpdateRecoveryStartup.Remove(update.Token);
             return 4;
         }
         Process? updatedProcess = null;
         try
         {
-            return UpdateDirectoryTransaction.Apply(
+            int result = UpdateDirectoryTransaction.Apply(
                 update.InstallDirectory,
                 update.StageDirectory,
                 update.Token,
@@ -53,18 +78,53 @@ internal static class Program
                 {
                     updatedProcess = StartApplication(
                         update.InstallDirectory, update.HealthFilePath, update.Token);
-                    return WaitForHealth(updatedProcess, update.HealthFilePath, update.Token);
+                    return WaitForHealth(updatedProcess, update.HealthFilePath, update.Token, expectedVersion);
                 },
                 () => TryStop(updatedProcess),
                 () =>
                 {
-                    using Process restored = StartApplication(update.InstallDirectory, null, null);
-                });
+                    using Process restored = StartApplication(update.InstallDirectory, null, null,
+                        sharedAdbBlockedReason: journal.FailureReason);
+                }, journal);
+            if (journal.IsStable())
+            {
+                journal.Finish();
+                UpdateRecoveryStartup.Remove(update.Token);
+            }
+            return result;
         }
         finally
         {
             updatedProcess?.Dispose();
         }
+    }
+
+    private static UpdateRecoveryJournal? PrepareRecoveryOrRestart(UpdateArguments update)
+    {
+        try
+        {
+            return UpdateRecoveryStartup.Prepare(RunnerDirectory(), update.InstallDirectory, update.StageDirectory, update.Token,
+                () => UpdateRecoveryStartup.Register(Environment.ProcessPath!, update.Token));
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            UpdateRecoveryStartup.Remove(update.Token);
+            WaitForParent(update.ParentProcessId);
+            using Process restored = StartApplication(update.InstallDirectory, null, null,
+                sharedAdbBlockedReason: Update.UpdateReasonCodes.RecoveryUnavailable);
+            return null;
+        }
+    }
+
+    private static string RunnerDirectory() => Path.GetDirectoryName(Environment.ProcessPath)
+        ?? throw new IOException("Maintenance runner directory is unavailable.");
+
+    private static bool NoApplicationRunning()
+    {
+        bool running = false;
+        foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(AppIdentity.ExecutableName)))
+        { using (process) { if (!process.HasExited) { running = true; } } }
+        return !running;
     }
 
     private static void WaitForParent(int processId)
@@ -111,7 +171,7 @@ internal static class Program
             "Application process did not start.");
     }
 
-    private static bool WaitForHealth(Process process, string healthFile, string token)
+    private static bool WaitForHealth(Process process, string healthFile, string token, string expectedVersion)
     {
         long deadline = Environment.TickCount64 + 45_000;
         while (Environment.TickCount64 < deadline)
@@ -121,20 +181,9 @@ internal static class Program
                 return false;
             }
 
-            if (File.Exists(healthFile))
+            if (UpdateHealthConfirmation.Matches(healthFile, token, expectedVersion, process.Id) && !process.HasExited)
             {
-                try
-                {
-                    using JsonDocument document = JsonDocument.Parse(File.ReadAllText(healthFile));
-                    if (document.RootElement.TryGetProperty("token", out JsonElement value) &&
-                        string.Equals(value.GetString(), token, StringComparison.Ordinal))
-                    {
-                        return true;
-                    }
-                }
-                catch (Exception exception) when (exception is IOException or JsonException)
-                {
-                }
+                return true;
             }
 
             if (process.WaitForExit(250))

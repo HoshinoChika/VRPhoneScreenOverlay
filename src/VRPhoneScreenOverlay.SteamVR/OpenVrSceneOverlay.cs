@@ -33,6 +33,8 @@ public interface IOpenVrSceneOverlay : IDisposable
         bool unlockKeypadEnabled);
 
     public void Submit(GpuVideoFrame frame);
+    public void DisconnectVideo() => Hide();
+    public void EnableStandaloneMenu() { }
     public void SetPhoneLocked(bool? locked);
     public void SetScreenGuard(bool enabled, bool faulted);
     public void NotifyControlGeometryRevision(long revision) { }
@@ -44,8 +46,9 @@ public interface IOpenVrSceneOverlay : IDisposable
 
 public static class OpenVrSceneOverlayFactory
 {
-    public static IOpenVrSceneOverlay Create(OpenVrOverlaySettings? settings = null, OpenVrVideoSettingsChannel? videoSettings = null) =>
-        new OpenVrSceneOverlay(settings ?? OpenVrOverlaySettings.PhoneDefault, videoSettings);
+    public static IOpenVrSceneOverlay Create(OpenVrOverlaySettings? settings = null, OpenVrVideoSettingsChannel? videoSettings = null, OpenVrTranslationChannel? translation = null,
+        OpenVrClipboardChannel? clipboard = null, Func<OpenVrPhonePlaceholderState>? phoneState = null) =>
+        new OpenVrSceneOverlay(settings ?? OpenVrOverlaySettings.PhoneDefault, videoSettings, translation, clipboard, phoneState);
 }
 
 public sealed class OpenVrOverlayException(
@@ -84,7 +87,8 @@ internal sealed class OpenVrSceneOverlay : IOpenVrSceneOverlay
     private ulong _handle = OpenVR.k_ulOverlayHandleInvalid;
     private bool _disposed;
 
-    public OpenVrSceneOverlay(OpenVrOverlaySettings settings, OpenVrVideoSettingsChannel? videoSettings = null)
+    public OpenVrSceneOverlay(OpenVrOverlaySettings settings, OpenVrVideoSettingsChannel? videoSettings = null, OpenVrTranslationChannel? translation = null,
+        OpenVrClipboardChannel? clipboard = null, Func<OpenVrPhonePlaceholderState>? phoneState = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         if (string.IsNullOrWhiteSpace(settings.Key) || string.IsNullOrWhiteSpace(settings.Name))
@@ -136,7 +140,7 @@ internal sealed class OpenVrSceneOverlay : IOpenVrSceneOverlay
                 _overlay,
                 _handle,
                 settings.DistanceMeters,
-                SubmitRetainedTexture, videoSettings);
+                SubmitRetainedTexture, videoSettings, translation, clipboard, phoneState);
             _interaction.PhoneInputReceived += OnPhoneInputReceived;
         }
         catch (OpenVrOverlayException)
@@ -206,6 +210,27 @@ internal sealed class OpenVrSceneOverlay : IOpenVrSceneOverlay
             _interaction.PrepareVideoSubmission();
             if (IsVisible) { SubmitRetainedTexture(); }
             _interaction.ConfirmFrameGeometry();
+        }
+    }
+
+    public void EnableStandaloneMenu()
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _interaction!.EnableStandaloneMenu();
+        }
+    }
+
+    public void DisconnectVideo()
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _interaction!.DisconnectVideo();
+            _ = _overlay!.HideOverlay(_handle);
+            _ = _overlay.ClearOverlayTexture(_handle);
+            _lastTexture.Dispose();
         }
     }
 

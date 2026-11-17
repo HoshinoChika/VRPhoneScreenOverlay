@@ -5,6 +5,10 @@ namespace VRPhoneScreenOverlay.Session;
 
 public sealed record SteamVrStartupStatus(bool PreferenceKnown, bool? Requested, bool Pending, int Attempts,
     bool ManifestLaunchObserved, OpenVrBindingResult Registration);
+public sealed class SteamVrStartupChangedEventArgs(SteamVrStartupStatus snapshot) : EventArgs
+{
+    public SteamVrStartupStatus Snapshot { get; } = snapshot;
+}
 
 /// <summary>One serialized registration operation; three attempts per preference/runtime epoch, no queue.</summary>
 public sealed class SteamVrStartupService : IAsyncDisposable
@@ -13,6 +17,9 @@ public sealed class SteamVrStartupService : IAsyncDisposable
     private readonly Func<bool> _ready;
     private readonly Func<bool?, CancellationToken, ValueTask<OpenVrBindingResult>> _configure;
     private readonly Action<SteamVrStartupStatus>? _observe;
+    private readonly Action? _afterFirstAttempt;
+    private readonly Func<CancellationToken, ValueTask<OpenVrBindingResult>>? _activate;
+    private bool _bindingActivated;
     private readonly SemaphoreSlim _operation = new(1, 1);
     private readonly CancellationTokenSource _stop = new();
     private Task? _worker;
@@ -22,26 +29,31 @@ public sealed class SteamVrStartupService : IAsyncDisposable
     private SteamVrStartupStatus _snapshot;
 
     public SteamVrStartupService(Func<AppSettingsSnapshot> settings, Func<bool> ready, bool manifestLaunchObserved,
-        Action<SteamVrStartupStatus>? observe = null)
-        : this(settings, ready, manifestLaunchObserved, OpenVrStartupRegistration.ConfigureAsync, observe) { }
+        Action<SteamVrStartupStatus>? observe = null, Action? afterFirstAttempt = null)
+        : this(settings, ready, manifestLaunchObserved, OpenVrStartupRegistration.ConfigureAsync, observe, afterFirstAttempt, OpenVrBindingRecovery.ActivateLocalBindingAsync) { }
 
     internal SteamVrStartupService(Func<AppSettingsSnapshot> settings, Func<bool> ready, bool manifestLaunchObserved,
-        Func<bool?, CancellationToken, ValueTask<OpenVrBindingResult>> configure, Action<SteamVrStartupStatus>? observe = null)
+        Func<bool?, CancellationToken, ValueTask<OpenVrBindingResult>> configure, Action<SteamVrStartupStatus>? observe = null, Action? afterFirstAttempt = null,
+        Func<CancellationToken, ValueTask<OpenVrBindingResult>>? activate = null)
     {
-        _settings = settings; _ready = ready; _configure = configure; _observe = observe;
+        _settings = settings; _ready = ready; _configure = configure; _observe = observe; _afterFirstAttempt = afterFirstAttempt; _activate = activate;
         _snapshot = new(false, null, true, 0, manifestLaunchObserved,
             new(false, "OPENVR_STARTUP_PENDING", "SteamVR 启动登记等待确认"));
     }
 
     public SteamVrStartupStatus Snapshot => Volatile.Read(ref _snapshot);
+    public event EventHandler<SteamVrStartupChangedEventArgs>? StateChanged;
     public Task RefreshAsync(CancellationToken token) => PollAsync(Environment.TickCount64, true, token);
-    public void Start() => _worker ??= RunAsync(_stop.Token);
+    public void Start() => _worker ??= Task.Run(() => RunAsync(_stop.Token));
 
     private async Task RunAsync(CancellationToken token)
     {
         using PeriodicTimer timer = new(TimeSpan.FromSeconds(1));
         try
         {
+            await PollAsync(Environment.TickCount64, false, token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            _afterFirstAttempt?.Invoke();
             while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
             { await PollAsync(Environment.TickCount64, false, token).ConfigureAwait(false); }
         }
@@ -64,6 +76,12 @@ public sealed class SteamVrStartupService : IAsyncDisposable
             { current = current with { Attempts = 0, Pending = true, PreferenceKnown = settings.StartupPreferenceKnown, Requested = requested }; _nextAttempt = now; }
             if (!current.Pending || current.Attempts >= 3 || now < _nextAttempt) { return; }
             OpenVrBindingResult result = await _configure(requested, token).ConfigureAwait(false);
+            if (result.Succeeded && !_bindingActivated && _activate is not null)
+            {
+                OpenVrBindingResult activation = await _activate(token).ConfigureAwait(false);
+                _bindingActivated = activation.Succeeded;
+                if (!activation.Succeeded) { result = activation; }
+            }
             // A settings save while the utility was running is a new intent;
             // do not report the old result as confirmation of the newer choice.
             AppSettingsSnapshot latest = _settings();
@@ -72,6 +90,8 @@ public sealed class SteamVrStartupService : IAsyncDisposable
             current = current with { Attempts = current.Attempts + 1, Pending = !result.Succeeded || superseded, Registration = result };
             _nextAttempt = now + (current.Attempts == 1 ? 2_000 : 5_000);
             Volatile.Write(ref _snapshot, current);
+            try { StateChanged?.Invoke(this, new(current)); }
+            catch (Exception) { /* UI observers cannot interrupt completed registration or later retries. */ }
             try { _observe?.Invoke(current); }
             catch (Exception) { /* Diagnostic observers cannot interrupt registration or its bounded retry policy. */ }
         }

@@ -1,3 +1,4 @@
+using VRPhoneScreenOverlay.Contracts;
 using System.Text.Json.Serialization;
 
 namespace VRPhoneScreenOverlay.Diagnostics;
@@ -76,7 +77,21 @@ public sealed record DiagnosticSessionSummary(
     float PlayspaceMultiplier,
     float PlayspaceOffsetX,
     float PlayspaceOffsetY,
-    float PlayspaceOffsetZ);
+    float PlayspaceOffsetZ)
+{
+    // The mean covers accepted samples over this session, not the latest frame.
+    public long EncodedQueueBytes { get; init; }
+    public long PeakEncodedQueueBytes { get; init; }
+    public long EncodedQueueByteOverflows { get; init; }
+    public AudioPlaybackDiagnostic? AudioPlayback { get; init; }
+    public VideoClockDiagnostic? VideoClock { get; init; }
+    public VideoColorMetadata? VideoColor { get; init; }
+    public VideoLatencyBreakdown? LatencyBreakdown { get; init; }
+    public long LatencySampleCount { get; init; }
+    public long UnavailableLatencySampleCount { get; init; }
+    public long RejectedLatencySampleCount { get; init; }
+    public bool HasLatencySamples => LatencySampleCount > 0 && double.IsFinite(AverageLatencyMilliseconds);
+}
 
 public sealed record DiagnosticBindingProfileSummary(
     string ControllerType,

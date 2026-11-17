@@ -1,9 +1,9 @@
 namespace VRPhoneScreenOverlay.Settings;
 
-public sealed record MotionPreferences(float Multiplier, bool InertiaEnabled, float Strength, float Gravity, float Friction, bool ResetAll)
+public sealed record MotionPreferences(float Multiplier, bool InertiaEnabled, float Strength, float Gravity, float Friction, bool ResetAll, bool ButtonResetDisabled = false)
 {
     public static MotionPreferences From(AppSettings value) => new(value.PlayspaceMultiplier, value.PlayspaceInertiaEnabled,
-        value.PlayspaceFlingStrength, value.PlayspaceGravity, value.PlayspaceFriction, value.PlayspaceResetAllOffsets);
+        value.PlayspaceFlingStrength, value.PlayspaceGravity, value.PlayspaceFriction, value.PlayspaceResetAllOffsets, value.PlayspaceButtonResetDisabled);
     public AppSettings Apply(AppSettings value) => value with
     {
         PlayspaceMultiplier = Multiplier,
@@ -12,6 +12,7 @@ public sealed record MotionPreferences(float Multiplier, bool InertiaEnabled, fl
         PlayspaceGravity = Gravity,
         PlayspaceFriction = Friction,
         PlayspaceResetAllOffsets = ResetAll,
+        PlayspaceButtonResetDisabled = ButtonResetDisabled,
     };
 }
 

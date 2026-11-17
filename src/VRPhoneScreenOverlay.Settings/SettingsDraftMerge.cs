@@ -9,6 +9,7 @@ public static class SettingsDraftMerge
         VideoResolutionPercent = current.VideoResolutionPercent != previous.VideoResolutionPercent ? current.VideoResolutionPercent : draft.VideoResolutionPercent,
         VideoBitrateMbps = current.VideoBitrateMbps != previous.VideoBitrateMbps ? current.VideoBitrateMbps : draft.VideoBitrateMbps,
         VideoMaximumFramesPerSecond = current.VideoMaximumFramesPerSecond != previous.VideoMaximumFramesPerSecond ? current.VideoMaximumFramesPerSecond : draft.VideoMaximumFramesPerSecond,
+        VideoUploadMode = current.VideoUploadMode != previous.VideoUploadMode ? current.VideoUploadMode : draft.VideoUploadMode,
         UpdateChannel = current.UpdateChannel != previous.UpdateChannel ? current.UpdateChannel : draft.UpdateChannel,
     };
 }

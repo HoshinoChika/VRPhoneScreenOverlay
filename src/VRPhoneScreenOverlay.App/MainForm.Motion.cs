@@ -15,7 +15,7 @@ internal sealed partial class MainForm
 
     private static OpenVrPlayspaceMotionOptions MotionOptions(AppSettings settings) => new(
         settings.PlayspaceFlingStrength, settings.PlayspaceGravity,
-        settings.PlayspaceFriction, settings.PlayspaceResetAllOffsets);
+        settings.PlayspaceFriction, settings.PlayspaceResetAllOffsets, settings.PlayspaceButtonResetDisabled);
 
     private void SetMotionControls(MotionPreferences value)
     {
@@ -28,6 +28,7 @@ internal sealed partial class MainForm
             _motionView.Gravity.SelectValue((decimal)value.Gravity);
             _motionView.Friction.SelectValue((decimal)value.Friction);
             _motionView.ResetAllOffsets = value.ResetAll;
+            _settingsView.ButtonResetDisabledToggle.Checked = value.ButtonResetDisabled;
             _inertiaToggle.Checked = value.InertiaEnabled;
             _inertiaToggle.Text = value.InertiaEnabled ? "开启" : "关闭";
         }
@@ -46,7 +47,7 @@ internal sealed partial class MainForm
         try
         {
             _playspaceDrag.SetMultiplier(value.Multiplier);
-            _playspaceDrag.ConfigureMotion(value.InertiaEnabled, new(value.Strength, value.Gravity, value.Friction, value.ResetAll));
+            _playspaceDrag.ConfigureMotion(value.InertiaEnabled, new(value.Strength, value.Gravity, value.Friction, value.ResetAll, value.ButtonResetDisabled));
             _motionRuntime = value;
         }
         finally { _applyingMotion = false; }
@@ -57,7 +58,7 @@ internal sealed partial class MainForm
         if (_updatingSettingsControls || _uiOperations.IsClosing) { return; }
         MotionPreferences value = new((float)_motionView.Multiplier.Value, _inertiaToggle.Checked,
             (float)_motionView.Strength.Value, (float)_motionView.Gravity.Value, (float)_motionView.Friction.Value,
-            _motionView.ResetAllOffsets);
+            _motionView.ResetAllOffsets, _settingsView.ButtonResetDisabledToggle.Checked);
         ApplyMotionRuntime(value);
         _inertiaToggle.Text = value.InertiaEnabled ? "开启" : "关闭";
         _motionView.Status.Text = string.Empty;
@@ -68,7 +69,7 @@ internal sealed partial class MainForm
     {
         if (_uiOperations.IsClosing || _applyingMotion || snapshot.MotionOptions is not { } options) { return; }
         MotionPreferences value = new(snapshot.Multiplier, snapshot.FlingEnabled, options.FlingStrength,
-            options.Gravity, options.Friction, options.ResetAllOffsets);
+            options.Gravity, options.Friction, options.ResetAllOffsets, options.ButtonResetDisabled);
         if (value == _motionRuntime) { return; }
         _motionRuntime = value;
         SetMotionControls(value);
@@ -79,16 +80,29 @@ internal sealed partial class MainForm
     private void OnMotionSaved(bool succeeded)
     {
         if (IsDisposed || Disposing) { return; }
-        if (InvokeRequired) { BeginInvoke(() => OnMotionSaved(succeeded)); return; }
+        if (_notifications.Dispatch(nameof(OnMotionSaved), () => OnMotionSaved(succeeded))) { return; }
         if (succeeded && _motionRuntime != MotionPreferences.From(_settings.Snapshot.Value))
         {
             _motionView.Status.Text = string.Empty;
             return;
         }
-        if (succeeded && !_closeConfirmation.IsUpdate) { _closeConfirmation.Description.Text = "最小化保留浮窗，退出关闭浮窗。"; }
+        if (succeeded && !ExitCommitted && !_closeConfirmation.IsUpdate) { _closeConfirmation.Description.Text = "最小化保留浮窗，退出关闭浮窗。"; }
         _playspaceDrag.ReportMotionSaveResult(succeeded);
         _motionView.Status.Text = succeeded ? string.Empty : "保存失败，请重新调整或重试退出";
+        const string settingsSaveFailure = "空间拖拽设置保存失败，请重新调整或重试退出";
+        if (!succeeded || _settingsView.Status.Text == settingsSaveFailure)
+        {
+            _settingsView.Status.Text = succeeded ? string.Empty : settingsSaveFailure;
+            _settingsView.Status.ForeColor = succeeded ? UiPalette.TextSecondary : UiPalette.Warning;
+        }
         _motionView.Status.ForeColor = succeeded ? UiPalette.TextSecondary : UiPalette.Warning;
+    }
+
+    protected override void OnExitCommitted()
+    {
+        _closeConfirmation.ConfigureExiting();
+        _closeConfirmation.Visible = true;
+        _closeConfirmation.BringToFront();
     }
 
     protected override async Task PrepareExitAsync()
@@ -102,19 +116,19 @@ internal sealed partial class MainForm
             _motionView.Strength.Commit();
             _motionView.Gravity.Commit();
             _motionView.Friction.Commit();
-            _closeConfirmation.Description.Text = "正在结束操作并保存设置…";
+            if (!ExitCommitted) { _closeConfirmation.Description.Text = "正在结束操作并保存设置…"; }
             if (_wirelessView.DeviceManagerHost.Visible) { _wirelessView.DeviceManager.CancelEdit(); }
             await _uiOperations.StopAsync().ConfigureAwait(true);
             await _motionWriter.FlushAsync().ConfigureAwait(true);
         }
         catch
         {
-            ResumeAfterExitFailure();
+            if (!ExitCommitted) { ResumeAfterExitFailure(); }
             throw;
         }
         finally
         {
-            if (!IsDisposed && !Disposing)
+            if (!ExitCommitted && !IsDisposed && !Disposing)
             {
                 _closeConfirmation.ExitButton.Enabled = true;
                 _closeConfirmation.MinimizeButton.Enabled = true;
@@ -136,6 +150,11 @@ internal sealed partial class MainForm
 
     protected override void OnExitPreparationFailed()
     {
+        if (ExitCommitted)
+        {
+            _closeConfirmation.ConfigureExiting(failed: true);
+            return;
+        }
         ShowExitConfirmation();
         _closeConfirmation.Description.Text = "设置未能保存，请稍后重试退出。";
     }

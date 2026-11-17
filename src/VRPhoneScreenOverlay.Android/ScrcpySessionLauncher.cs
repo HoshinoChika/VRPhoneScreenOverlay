@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
-using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using VRPhoneScreenOverlay.Contracts;
@@ -81,34 +80,29 @@ internal sealed class ScrcpySessionLauncher
 
         int scid = System.Security.Cryptography.RandomNumberGenerator.GetInt32(1, int.MaxValue);
         string socketName = $"scrcpy_{scid:x8}";
-        AdbCommandResult forward = await RunCommandWithinDeadlineAsync(
-                [
-                    "-s",
-                    request.Device.Serial,
-                    "forward",
-                    "tcp:0",
-                    $"localabstract:{socketName}",
-                ],
-                _forwardTimeout,
-                request.Deadline,
-                $"{prefix}_FORWARD_TIMEOUT",
-                $"建立手机{channelName}通道超时",
-                cancellationToken)
-            .ConfigureAwait(false);
-        EnsureCommand(
-            forward,
-            $"{prefix}_FORWARD",
-            $"无法建立手机{channelName}通道");
-        if (!int.TryParse(
-                forward.StandardOutput.Trim(),
-                NumberStyles.None,
-                CultureInfo.InvariantCulture,
-                out int localPort) || localPort is < 1 or > 65535)
+        int localPort = await ScrcpyForwardPort.CreateAsync(async () =>
         {
-            throw new AndroidConnectionException(
-                $"{prefix}_FORWARD_PORT_INVALID",
-                $"手机{channelName}通道返回了无效端口");
-        }
+            AdbCommandResult forward = await RunCommandWithinDeadlineAsync(
+                    [
+                        "-s",
+                        request.Device.Serial,
+                        "forward",
+                        "tcp:0",
+                        $"localabstract:{socketName}",
+                    ],
+                    _forwardTimeout,
+                    request.Deadline,
+                    $"{prefix}_FORWARD_TIMEOUT",
+                    $"建立手机{channelName}通道超时",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            EnsureCommand(
+                forward,
+                $"{prefix}_FORWARD",
+                $"无法建立手机{channelName}通道");
+            return forward.StandardOutput;
+        }, _commandRunner, request.Device.Serial, socketName, $"{prefix}_FORWARD_PORT_INVALID",
+            $"手机{channelName}通道返回了无效端口").ConfigureAwait(false);
 
         AdbManagedProcess? serverProcess = null;
         TcpClient? tcpClient = null;

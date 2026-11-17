@@ -9,6 +9,7 @@ public static class SettingsChoiceRollback
         VideoResolutionPercent = attempted.VideoResolutionPercent != previous.VideoResolutionPercent && current.VideoResolutionPercent == attempted.VideoResolutionPercent ? previous.VideoResolutionPercent : current.VideoResolutionPercent,
         VideoBitrateMbps = attempted.VideoBitrateMbps != previous.VideoBitrateMbps && current.VideoBitrateMbps == attempted.VideoBitrateMbps ? previous.VideoBitrateMbps : current.VideoBitrateMbps,
         VideoMaximumFramesPerSecond = attempted.VideoMaximumFramesPerSecond != previous.VideoMaximumFramesPerSecond && current.VideoMaximumFramesPerSecond == attempted.VideoMaximumFramesPerSecond ? previous.VideoMaximumFramesPerSecond : current.VideoMaximumFramesPerSecond,
+        VideoUploadMode = attempted.VideoUploadMode != previous.VideoUploadMode && current.VideoUploadMode == attempted.VideoUploadMode ? previous.VideoUploadMode : current.VideoUploadMode,
         UpdateChannel = attempted.UpdateChannel != previous.UpdateChannel && current.UpdateChannel == attempted.UpdateChannel ? previous.UpdateChannel : current.UpdateChannel,
     };
 }

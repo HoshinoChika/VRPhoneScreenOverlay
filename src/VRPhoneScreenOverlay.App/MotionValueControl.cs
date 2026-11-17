@@ -21,6 +21,8 @@ public sealed class MotionValueControl : UserControl
         BackColor = UiPalette.SurfaceRaised;
         _editor.BackColor = UiPalette.Window;
         _editor.ForeColor = UiPalette.TextPrimary;
+        _editor.MaxLength = 32;
+        TextInputGuard.Attach(_editor, text => TextInputGuard.IsNumericDraft(text, DecimalPlaces, Minimum < 0));
         _box.Controls.Add(_editor);
         Controls.Add(_minus);
         Controls.Add(_box);
@@ -51,7 +53,7 @@ public sealed class MotionValueControl : UserControl
     internal void SelectValue(decimal value) { if (value != _value) { SetValue(value, false); } }
     internal void Commit()
     {
-        if (decimal.TryParse(_editor.Text, NumberStyles.Number, CultureInfo.CurrentCulture, out decimal value)) { SetValue(value, true); }
+        if (decimal.TryParse(_editor.Text, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.CurrentCulture, out decimal value)) { SetValue(value, true); }
         else { RenderValue(); }
     }
     internal void Adjust(int steps) { Commit(); SetValue(_value + Increment * steps, true); }

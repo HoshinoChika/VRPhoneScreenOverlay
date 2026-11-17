@@ -27,20 +27,25 @@ internal static class IncidentStorage
         return data;
     }
 
-    internal static async ValueTask WriteAsync<T>(string path, T value, JsonTypeInfo<T> type, CancellationToken token)
+    internal static async ValueTask WriteAsync<T>(string path, T value, JsonTypeInfo<T> type, CancellationToken token, bool durable = true)
     {
-        byte[] data = Serialize(value, type);
+        await WriteBytesAsync(path, Serialize(value, type), token, durable).ConfigureAwait(false);
+    }
+
+    internal static async ValueTask WriteBytesAsync(string path, ReadOnlyMemory<byte> data, CancellationToken token, bool durable = true)
+    {
+        if (data.Length > MaximumBytes) { throw new IOException("Incident record exceeds capacity."); }
         string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             await using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write,
-                FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.WriteThrough))
+                FileShare.None, 4096, FileOptions.Asynchronous | (durable ? FileOptions.WriteThrough : FileOptions.None)))
             {
                 await stream.WriteAsync(data, token).ConfigureAwait(false);
                 await stream.FlushAsync(token).ConfigureAwait(false);
-                // FlushAsync drains managed buffers; this separate OS durability barrier
-                // has no asynchronous equivalent and runs only at lifecycle boundaries.
-                RandomAccess.FlushToDisk(stream.SafeFileHandle);
+                // Periodic snapshots need atomic replacement, not a device flush on
+                // every tick. Lifecycle/failure callers retain the durability barrier.
+                if (durable) { RandomAccess.FlushToDisk(stream.SafeFileHandle); }
             }
             File.Move(temporary, path, overwrite: true);
         }

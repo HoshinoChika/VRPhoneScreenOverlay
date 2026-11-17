@@ -6,7 +6,8 @@ public sealed record OpenVrPlayspaceMotionOptions(
     float FlingStrength = 1,
     float Gravity = 9.8f,
     float Friction = 0,
-    bool ResetAllOffsets = false)
+    bool ResetAllOffsets = false,
+    bool ButtonResetDisabled = false)
 {
     public static OpenVrPlayspaceMotionOptions Default { get; } = new();
 

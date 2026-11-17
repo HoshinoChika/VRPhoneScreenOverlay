@@ -6,6 +6,8 @@ public partial class WirelessConnectionView : UserControl
     public WirelessConnectionView()
     {
         InitializeComponent();
+        TextInputGuard.Attach(autoPairCode, text => text.Length <= 6 && text.All(char.IsAsciiDigit));
+        TextInputGuard.Attach(pairCode, text => text.Length <= 6 && text.All(char.IsAsciiDigit));
         deviceManager.CancelButton.Click += (_, _) => { deviceManager.CancelEdit(); HideDeviceManager(); };
         methodSelector.SelectedValueChanged += (_, _) => ApplyMethod();
         ApplyMethod();

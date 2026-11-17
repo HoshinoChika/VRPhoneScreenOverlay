@@ -63,6 +63,7 @@ public sealed class DecodedVideoFrame : IDisposable
     // stage. Zero keeps compatibility with synchronous/custom decoders that do
     // not publish through concurrent return-value and notification paths.
     public long OutputSequence { get; internal set; }
+    public VideoColorMetadata Color { get; internal set; }
     public VideoGeometryDiagnostic? SourceGeometry { get; init; }
 
     public ReadOnlyMemory<byte> Pixels => (_owner ?? throw new ObjectDisposedException(

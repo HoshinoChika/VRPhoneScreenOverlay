@@ -164,3 +164,48 @@ public sealed class WirelessPairingMethodSelectorControl : UserControl
         return true;
     }
 }
+
+[ToolboxItem(true)]
+public sealed class VideoUploadModeSelectorControl : FixedSegmentSelector<int>
+{
+    public VideoUploadModeSelectorControl() : base(510, 38, segmentGap: 8)
+    {
+        SetNodes(new[] { new FixedChoiceNode<int>(0, "自动（推荐）"),
+            new FixedChoiceNode<int>(1, "缓冲中转"), new FixedChoiceNode<int>(2, "直接提交") }, 0);
+        string[] names = ["uploadAutoHelp", "uploadStagingHelp", "uploadDirectHelp"];
+        string[] descriptions = ["优先缓冲中转，初始化兼容失败时尝试直接提交。", "通过中转纹理处理画面。", "直接交给显卡驱动处理。"];
+        foreach (ModernStepButton button in Controls.OfType<ModernStepButton>())
+        {
+            int index = (int)button.Tag!;
+            button.Name = "uploadOption" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            ContextHelpIcon help = new() { Name = names[index], HelpText = descriptions[index], AccessibleName = button.Text + "说明" };
+            button.Controls.Add(help);
+            button.SizeChanged += (_, _) => ArrangeHelp(button, help);
+            button.FontChanged += (_, _) => ArrangeHelp(button, help);
+            ArrangeHelp(button, help);
+        }
+    }
+    internal void ArrangeHelpIcons()
+    {
+        foreach (ModernStepButton button in Controls.OfType<ModernStepButton>())
+        {
+            foreach (ContextHelpIcon help in button.Controls.OfType<ContextHelpIcon>()) { ArrangeHelp(button, help); }
+        }
+    }
+    private static void ArrangeHelp(Button button, ContextHelpIcon help)
+    {
+        int size = UiLayoutMetrics.Pixels(button, 22);
+        int textWidth = TextRenderer.MeasureText(button.Text, button.Font, Size.Empty,
+            TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding).Width;
+        help.SetBounds((button.Width + textWidth) / 2 + UiLayoutMetrics.Pixels(button, 2),
+            (button.Height - size) / 2, size, size);
+
+    }
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public int SelectedIndex
+    {
+        get => TryGetSelectedValue(out int value) ? value : 0;
+        set => _ = SelectValue(value);
+    }
+}

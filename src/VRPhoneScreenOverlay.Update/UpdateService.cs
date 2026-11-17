@@ -266,7 +266,7 @@ public sealed class HttpUpdateService : IUpdateService
             string.IsNullOrWhiteSpace(descriptor.PackageUrl) ||
             descriptor.PackageSize is <= 0 ||
             descriptor.PackageSize > _options.MaximumPackageBytes ||
-            descriptor.PackageSha256.Length != 64 ||
+            string.IsNullOrEmpty(descriptor.PackageSha256) || descriptor.PackageSha256.Length != 64 ||
             !descriptor.PackageSha256.All(Uri.IsHexDigit))
         {
             throw new UpdateException(
@@ -275,8 +275,9 @@ public sealed class HttpUpdateService : IUpdateService
         }
     }
 
-    private static byte[] DecodeBase64(string value, string reasonCode)
+    private static byte[] DecodeBase64(string? value, string reasonCode)
     {
+        if (string.IsNullOrWhiteSpace(value)) { throw new UpdateException(reasonCode, "更新清单编码无效"); }
         try
         {
             return Convert.FromBase64String(value);

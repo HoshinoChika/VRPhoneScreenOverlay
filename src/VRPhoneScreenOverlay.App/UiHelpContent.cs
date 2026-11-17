@@ -2,12 +2,15 @@ namespace VRPhoneScreenOverlay.App;
 
 internal static class UiHelpContent
 {
+    public const string TranslationSound = "截图成功时会播放提示音";
+    public const string TranslationApi = "使用DeepSeek进行识图并翻译";
+    public const string TranslationApiState = "绿灯表示上次验证通过；红灯表示未配置，或已发现不可用。";
     public const string KeepAwake = "抓住手机浮窗时，点亮手机屏幕。";
     public const string Unlock = "在 VR 里用数字键盘输入手机锁屏密码。";
-    public const string AutoOpen = "手机连接成功且 SteamVR 已启动后，自动打开手机浮窗。";
+    public const string AutoOpen = "开启后，SteamVR 就绪时自动打开 VR 浮窗，未连接手机时显示占位。手机连接后自动接入画面、声音和控制，断开恢复占位。手动关闭后本次运行不自动重开；关闭再开启此开关可重新启用。";
     public const string ScreenOff = "使用浮窗时让手机实体屏幕保持熄灭，减少误触。";
     public const string SteamVr = "启动 SteamVR 时，一起打开本软件。";
-    public const string Minimize = "手机浮窗打开后，将电脑上的主窗口收起到托盘。";
+    public const string Minimize = "VR 浮窗打开后，将电脑上的主窗口收起到托盘，不要求连接手机。";
     public const string Pico = "一定程度上缓解 PICO 互联串流在 VRChat 中造成的语音延迟。";
     public const string Resolution = "调整画面的清晰度，调低有助于减少卡顿。";
     public const string Bitrate = "影响画面细节，越高通常越清晰；卡顿时可适当调低。";

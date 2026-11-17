@@ -86,6 +86,7 @@ public interface IAudioDecoder : IAsyncDisposable
 
 public interface IAudioSink : IAsyncDisposable
 {
+    public VRPhoneScreenOverlay.Contracts.AudioPlaybackDiagnostic? PlaybackDiagnostic => null;
     public string OutputDeviceId { get; }
 
     public TimeSpan BufferedDuration { get; }
@@ -93,6 +94,9 @@ public interface IAudioSink : IAsyncDisposable
     public ValueTask WriteAsync(
         ReadOnlyMemory<short> interleavedPcm,
         CancellationToken cancellationToken);
+
+    public ValueTask WriteTimestampedAsync(ReadOnlyMemory<short> pcm, long presentationTimeMicroseconds, CancellationToken token) =>
+        WriteAsync(pcm, token);
 
     public void Clear();
 }

@@ -4,10 +4,10 @@ namespace VRPhoneScreenOverlay.SteamVR;
 
 internal enum OpenVrMenuTarget
 {
-    None, Dot, PhoneToggle, Opacity, PlayspaceToggle, MultiplierDown, MultiplierUp,
+    None, Dot, Screenshot, TranslationToggle, TranslationClose, TranslationAction, ClipboardToggle, ClipboardAction, PhoneToggle, Opacity, PlayspaceToggle, MultiplierDown, MultiplierUp,
     ScreenGuardToggle, KeypadToggle, Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Backspace, Confirm,
     MotionSettings, MotionBack, FlingToggle, StrengthDown, StrengthUp, GravityDown, GravityUp, FrictionDown, FrictionUp, ResetMode, MotionSave,
-    ResetModePrevious,
+    ResetModePrevious, PlayspaceReset,
     VideoSettings, VideoBack, ResolutionDown, ResolutionUp, BitrateDown, BitrateUp, FrameRateDown, FrameRateUp, VideoApply,
 }
 
@@ -16,12 +16,19 @@ internal readonly record struct OpenVrMenuChange(
     bool VisibilityChanged = false,
     bool OpacityChanged = false,
     OpenVrPlayspaceControlRequest? Playspace = null,
-    OpenVrPhoneInputCommand? PhoneCommand = null);
+    OpenVrPhoneInputCommand? PhoneCommand = null,
+    bool PlayspaceResetRequested = false);
 
 // User intent is separate from temporary dashboard/tracking suppression. This
 // state contains no pose: hide/show cannot move or resize the phone by accident.
-internal sealed class OpenVrPhoneMenuState
+internal sealed partial class OpenVrPhoneMenuState
 {
+    public OpenVrTranslationChannel? Translation { get; set; }
+    private TranslationPanelHit? _translationArmed;
+    public OpenVrClipboardChannel? Clipboard { get; set; }
+    private ClipboardPanelHit? _clipboardArmed;
+    public bool ClipboardExpanded { get; private set; }
+    public bool ClipboardVisible => ControlsVisible && ClipboardExpanded;
     public OpenVrVideoSettingsChannel? VideoSettings { get; set; }
     public bool VideoExpanded { get; private set; }
     public OpenVrVideoOptions VideoDraft { get; private set; } = new(100, 16, 60);
@@ -66,7 +73,11 @@ internal sealed class OpenVrPhoneMenuState
         ScreenGuardFaulted = faulted;
     }
     public bool PhoneHidden { get; private set; }
+    public bool DisconnectedPlaceholder { get; set; }
+    public OpenVrPhonePlaceholderState PlaceholderState { get; set; }
     public bool Expanded { get; private set; }
+    public bool TranslationExpanded { get; private set; }
+    public bool TranslationVisible => ControlsVisible && TranslationExpanded;
     public bool DashboardVisible { get; private set; }
     public bool KeypadEnabled { get; private set; }
     public int OpacityPercent { get; private set; } = 100;
@@ -79,8 +90,13 @@ internal sealed class OpenVrPhoneMenuState
     public bool KeypadVisible => PhoneVisible && KeypadEnabled && _keypadExpanded;
     public bool IsSurfaceVisible(OpenVrPhoneSurface surface) => surface switch
     {
+        OpenVrPhoneSurface.ScreenshotButton => ControlsVisible && Translation is not null,
         OpenVrPhoneSurface.Dot => ControlsVisible,
         OpenVrPhoneSurface.Menu => SidebarVisible,
+        OpenVrPhoneSurface.TranslationButton => ControlsVisible && Translation is not null,
+        OpenVrPhoneSurface.TranslationPanel => TranslationVisible,
+        OpenVrPhoneSurface.ClipboardButton => ControlsVisible && Clipboard is not null,
+        OpenVrPhoneSurface.ClipboardPanel => ClipboardVisible,
         OpenVrPhoneSurface.Keypad => KeypadVisible,
         _ => PhoneVisible,
     };
@@ -129,6 +145,12 @@ internal sealed class OpenVrPhoneMenuState
 
     public void ResetInput()
     {
+        _translationArmed = null;
+        _clipboardArmed = null;
+        Clipboard?.SetPressed(null);
+        Translation?.SetPressed(null);
+        _panelGestureTarget = OpenVrMenuTarget.None;
+        _stickTarget = OpenVrMenuTarget.None;
         _previousPressed = true;
         _sliderCaptured = false;
         _repeatTarget = OpenVrMenuTarget.None;
@@ -136,15 +158,55 @@ internal sealed class OpenVrPhoneMenuState
     }
 
     public OpenVrMenuChange ProcessInput(bool validRay, bool insideMenu, OpenVrMenuTarget target,
-        float sliderFraction, bool pressed, OpenVrSharedPlayspaceInput playspace, long? timestampMilliseconds = null)
+        float sliderFraction, bool pressed, OpenVrSharedPlayspaceInput playspace, long? timestampMilliseconds = null,
+        TranslationPanelHit? translationHit = null, ClipboardPanelHit? clipboardHit = null, float? panelY = null)
     {
         if (!ControlsVisible || !validRay)
         {
             ResetInput();
             return default;
         }
+        SynchronizePhoneConnection();
         bool clicked = pressed && !_previousPressed;
+        bool released = !pressed && _previousPressed;
         _previousPressed = pressed;
+        if (ProcessPanelGesture(insideMenu, target, clicked, released, panelY, translationHit, clipboardHit))
+        { SuppressPhoneTouch = true; return new(Consumed: true); }
+        if (!PhoneConnected && target is OpenVrMenuTarget.ClipboardToggle or OpenVrMenuTarget.ClipboardAction or OpenVrMenuTarget.Screenshot)
+        { SuppressPhoneTouch = true; return new(Consumed: true); }
+        bool clipboardAction = insideMenu && ClipboardVisible && target == OpenVrMenuTarget.ClipboardAction &&
+            clipboardHit?.Action is ClipboardPanelAction.Copy or ClipboardPanelAction.Parse;
+        if (_clipboardArmed is not null && (!clipboardAction || clipboardHit != _clipboardArmed))
+        { _clipboardArmed = null; Clipboard?.SetPressed(null); }
+        if (clipboardAction && clicked)
+        {
+            _clipboardArmed = clipboardHit; Clipboard?.SetPressed(clipboardHit);
+            SuppressPhoneTouch = true; return new(Consumed: true);
+        }
+        if (released && _clipboardArmed is { } copied)
+        {
+            _clipboardArmed = null; Clipboard?.SetPressed(null); Clipboard?.Submit(copied);
+            SuppressPhoneTouch = true; return new(Consumed: true);
+        }
+        bool translationAction = insideMenu && TranslationVisible && target == OpenVrMenuTarget.TranslationAction &&
+            translationHit?.Action is TranslationPanelAction.Answer or TranslationPanelAction.Translate or TranslationPanelAction.Explain;
+        if (_translationArmed is not null && (!translationAction || translationHit != _translationArmed))
+        { _translationArmed = null; Translation?.SetPressed(null); }
+        if (translationAction && clicked)
+        {
+            _translationArmed = translationHit;
+            Translation?.SetPressed(translationHit);
+            SuppressPhoneTouch = true;
+            return new(Consumed: true);
+        }
+        if (released && _translationArmed is { } armed)
+        {
+            _translationArmed = null;
+            Translation?.SetPressed(null);
+            Translation?.Submit(armed);
+            SuppressPhoneTouch = true;
+            return new(Consumed: true);
+        }
         long now = timestampMilliseconds ?? Environment.TickCount64;
         int repeatUnits = 1;
         bool repeatable = target is OpenVrMenuTarget.MultiplierDown or OpenVrMenuTarget.MultiplierUp or
@@ -191,8 +253,39 @@ internal sealed class OpenVrPhoneMenuState
         SuppressPhoneTouch = true;
         if (target == OpenVrMenuTarget.Dot)
         {
+            ClipboardExpanded = false;
+            TranslationExpanded = false;
             Expanded = !Expanded;
             if (!Expanded) { DismissHiddenEntry(); }
+            return new(Consumed: true);
+        }
+        if (target == OpenVrMenuTarget.Screenshot) { Translation?.Screenshot.Submit(); return new(Consumed: true); }
+        if (target is OpenVrMenuTarget.TranslationToggle or OpenVrMenuTarget.TranslationClose)
+        {
+            ClipboardExpanded = false;
+            Expanded = false;
+            DismissHiddenEntry();
+            TranslationExpanded = target == OpenVrMenuTarget.TranslationToggle && !TranslationExpanded;
+            return new(Consumed: true);
+        }
+        if (target == OpenVrMenuTarget.ClipboardToggle)
+        {
+            Expanded = false; TranslationExpanded = false; DismissHiddenEntry();
+            ClipboardExpanded = !ClipboardExpanded; return new(Consumed: true);
+        }
+        if (target == OpenVrMenuTarget.ClipboardAction && ClipboardVisible && clipboardHit is { } clipboardCommand)
+        {
+            if (clipboardCommand.Action == ClipboardPanelAction.Close) { ClipboardExpanded = false; }
+            else { Clipboard?.Submit(clipboardCommand); }
+            return new(Consumed: true);
+        }
+        if (target == OpenVrMenuTarget.TranslationAction && TranslationVisible)
+        {
+            if (Translation is not null && translationHit is { } hit)
+            {
+                if (hit.Action == TranslationPanelAction.Close) { TranslationExpanded = false; }
+                else { Translation.Submit(hit); }
+            }
             return new(Consumed: true);
         }
         if (target == OpenVrMenuTarget.KeypadToggle && (Expanded || KeypadVisible) && KeypadEnabled && !PhoneHidden)
@@ -292,6 +385,8 @@ internal sealed class OpenVrPhoneMenuState
                 return new(Consumed: true, VisibilityChanged: true);
             case OpenVrMenuTarget.ScreenGuardToggle:
                 return new(Consumed: true, PhoneCommand: new(PhoneInputCommandKind.ToggleScreenGuard));
+            case OpenVrMenuTarget.PlayspaceReset:
+                return new(Consumed: true, PlayspaceResetRequested: true);
             case OpenVrMenuTarget.PlayspaceToggle:
                 return new(Consumed: true, Playspace: new(!playspace.PlayspaceEnabled, playspace.Multiplier));
         }

@@ -65,13 +65,15 @@ internal sealed class OpenVrPlayspaceDragController
         OpenVrPlayspaceMotionOptions? options = null,
         bool flingEnabled = false,
         float elapsedSeconds = 0.004f,
-        bool motionAllowed = true)
+        bool motionAllowed = true,
+        bool menuResetRequested = false)
     {
         options ??= OpenVrPlayspaceMotionOptions.Default;
         if (_flingWasEnabled != flingEnabled) { _motion.Stop(); }
         _flingWasEnabled = flingEnabled;
         if (!motionAllowed) { Suspend(); return default; }
-        bool resetRequested = resetPressed && !_previousReset;
+        bool resetRequested = menuResetRequested ||
+            (!options.ButtonResetDisabled && resetPressed && !_previousReset);
         _previousReset = resetPressed;
         if (resetRequested)
         {

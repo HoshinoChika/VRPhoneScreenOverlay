@@ -7,7 +7,7 @@ using VRPhoneScreenOverlay.Protocols;
 namespace VRPhoneScreenOverlay.Diagnostics;
 
 /// <summary>Fixed, bounded software file checks. No model paths, file contents, credentials or user filenames leave this service.</summary>
-public sealed class LocalSoftwareFileInspector(string applicationDirectory, string dataDirectory, string runningVersion)
+public sealed partial class LocalSoftwareFileInspector(string applicationDirectory, string dataDirectory, string runningVersion)
 {
     private const long _maximumFileBytes = 32 * 1024 * 1024;
     private const int _maximumJsonBytes = 256 * 1024;
@@ -28,6 +28,7 @@ public sealed class LocalSoftwareFileInspector(string applicationDirectory, stri
                 await HashGroupAsync("Adb", Path.Combine(_data, "adb-runtime"), token, runtimeCopy: true).ConfigureAwait(false),
                 await HashGroupAsync("Scrcpy", Path.Combine(_application, "resources", "scrcpy"), token).ConfigureAwait(false),
                 await HashGroupAsync("OpenVr", _application, token).ConfigureAwait(false))));
+            evidence.Add(new("binding_tool", "software_files", await InspectBindingToolAsync(token).ConfigureAwait(false)));
             List<string> binaries = [];
             foreach (string name in new[] { "VRPhoneScreenOverlay.dll", "VRPhoneScreenOverlay.Diagnostics.dll",
                 "VRPhoneScreenOverlay.Android.dll", "VRPhoneScreenOverlay.Session.dll", "VRPhoneScreenOverlay.SteamVR.dll",
@@ -42,7 +43,8 @@ public sealed class LocalSoftwareFileInspector(string applicationDirectory, stri
             {
                 configuration.Add(name + "=" + await InspectFileAsync(Path.Combine(_data, name), true, null, token).ConfigureAwait(false));
             }
-            foreach (string name in new[] { "action_manifest.json", "manifest.vrmanifest", "service.config.json" })
+            foreach (string name in new[] { "action_manifest.json", "manifest.vrmanifest", "service.config.json",
+                "VRPhoneScreenOverlay.SteamVR.BindingTool.deps.json", "VRPhoneScreenOverlay.SteamVR.BindingTool.runtimeconfig.json" })
             {
                 configuration.Add("packaged_" + name + "=" + await InspectFileAsync(Path.Combine(_application, name), true, null, token).ConfigureAwait(false));
             }
@@ -115,7 +117,8 @@ public sealed class LocalSoftwareFileInspector(string applicationDirectory, stri
             {
                 ReadOnlyMemory<byte> jsonBytes = bytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? bytes.AsMemory(3) : bytes;
                 using JsonDocument document = JsonDocument.Parse(jsonBytes, new JsonDocumentOptions { MaxDepth = 32 });
-                return document.RootElement.ValueKind == JsonValueKind.Object ? "json_object_readable" : "invalid_json_object";
+                if (document.RootElement.ValueKind != JsonValueKind.Object) { return "invalid_json_object"; }
+                if (expectedHash is null) { return "json_object_readable"; }
             }
             if (expectedHash is not null)
             { return string.Equals(Convert.ToHexString(SHA256.HashData(bytes)), expectedHash, StringComparison.OrdinalIgnoreCase) ? "hash_valid" : "hash_mismatch"; }

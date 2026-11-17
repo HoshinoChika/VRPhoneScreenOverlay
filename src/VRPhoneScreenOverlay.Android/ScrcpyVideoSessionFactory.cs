@@ -69,6 +69,8 @@ internal sealed class ScrcpyVideoSessionFactory(
                 transport,
                 protocol,
                 videoClock,
+                token => TrySynchronizeVideoClockAsync(device, OperationDeadline.Start(TimeSpan.FromSeconds(5)),
+                    token, TimeSpan.FromSeconds(3)),
                 _log);
         }
         catch
@@ -81,10 +83,12 @@ internal sealed class ScrcpyVideoSessionFactory(
     private async ValueTask<AndroidVideoClockSynchronizer?> TrySynchronizeVideoClockAsync(
         ResolvedAndroidDevice device,
         OperationDeadline deadline,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? logcatTimeout = null)
     {
         string marker = $"vps-{Guid.NewGuid():N}";
         long startedTimestamp = Stopwatch.GetTimestamp();
+        string failureStage = "marker-command";
         try
         {
             AdbCommandResult markerResult = await _launcher.RunDeviceCommandAsync(
@@ -99,9 +103,11 @@ internal sealed class ScrcpyVideoSessionFactory(
             long completedTimestamp = Stopwatch.GetTimestamp();
             if (!markerResult.Succeeded)
             {
-                return LogVideoClockUnavailable(device.DeviceKey);
+                return LogVideoClockUnavailable(device.DeviceKey, failureStage);
             }
 
+            failureStage = "logcat-command";
+            // Filter the unique marker before limiting output; a busy global tail can lose it.
             AdbCommandResult logcat = await _launcher.RunDeviceCommandAsync(
                     device,
                     [
@@ -114,18 +120,21 @@ internal sealed class ScrcpyVideoSessionFactory(
                         "-v",
                         "usec",
                         "-d",
-                        "-t",
-                        "20",
+                        "-e",
+                        marker,
+                        "-m",
+                        "1",
                         "-s",
                         "VRPhoneScreenClock:I",
                         "*:S",
                     ],
-                    TimeSpan.FromSeconds(1),
+                    logcatTimeout ?? TimeSpan.FromSeconds(1),
                     deadline,
                     AndroidReasonCodes.VideoClockSyncTimeout,
                     "同步手机视频时钟超时",
                     cancellationToken)
                 .ConfigureAwait(false);
+            failureStage = logcat.Succeeded ? "marker-or-clock-format" : "logcat-command";
             if (logcat.Succeeded && TryReadMonotonicSeconds(
                     logcat.StandardOutput,
                     marker,
@@ -152,20 +161,20 @@ internal sealed class ScrcpyVideoSessionFactory(
         {
         }
 
-        return LogVideoClockUnavailable(device.DeviceKey);
+        return LogVideoClockUnavailable(device.DeviceKey, failureStage);
     }
 
-    private AndroidVideoClockSynchronizer? LogVideoClockUnavailable(string deviceKey)
+    private AndroidVideoClockSynchronizer? LogVideoClockUnavailable(string deviceKey, string stage)
     {
         WriteLog(
             "video_clock_unavailable",
             AndroidReasonCodes.VideoClockUnavailable,
-            "手机视频时钟暂不可同步，延迟数据不可用",
+            $"手机视频时钟暂不可同步，延迟数据不可用；阶段={stage}",
             deviceKey);
         return null;
     }
 
-    private static bool TryReadMonotonicSeconds(
+    internal static bool TryReadMonotonicSeconds(
         string logcatOutput,
         string marker,
         out string monotonicSeconds)
@@ -177,19 +186,15 @@ internal sealed class ScrcpyVideoSessionFactory(
                 continue;
             }
 
-            foreach (string part in line.Split(
-                [' ', '\t', '[', ']'],
-                StringSplitOptions.RemoveEmptyEntries))
+            // Monotonic threadtime starts with seconds. Never mistake a PID or TID
+            // for the device clock when a vendor returns a different format.
+            string[] parts = line.Split([' ', '\t', '[', ']'], StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 0 && parts[0].Contains('.', StringComparison.Ordinal) &&
+                double.TryParse(parts[0], NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture,
+                    out double value) && double.IsFinite(value) && value > 0)
             {
-                if (double.TryParse(
-                    part,
-                    NumberStyles.AllowDecimalPoint,
-                    CultureInfo.InvariantCulture,
-                    out double value) && value > 0)
-                {
-                    monotonicSeconds = part;
-                    return true;
-                }
+                monotonicSeconds = parts[0];
+                return true;
             }
         }
 

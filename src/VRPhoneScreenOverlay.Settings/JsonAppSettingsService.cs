@@ -171,7 +171,7 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            AppSettings value = AppSettingsPolicy.Normalize(MotionPreferences.From(Snapshot.Value).Apply(settings));
+            AppSettings value = AppSettingsPolicy.Normalize(MotionPreferences.From(Snapshot.Value).Apply(settings) with { VrcPhotoSyncEnabled = Snapshot.Value.VrcPhotoSyncEnabled, VideoUploadMode = Snapshot.Value.VideoUploadMode });
             bool startupKnown = _startupPreferenceKnown || value.LaunchWithSteamVr != Snapshot.Value.LaunchWithSteamVr;
             await WriteAtomicAsync(value, cancellationToken, startupKnown).ConfigureAwait(false);
             _startupPreferenceKnown = startupKnown;
@@ -193,10 +193,38 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
                 VideoResolutionPercent = choices.VideoResolutionPercent,
                 VideoBitrateMbps = choices.VideoBitrateMbps,
                 VideoMaximumFramesPerSecond = choices.VideoMaximumFramesPerSecond,
+                VideoUploadMode = choices.VideoUploadMode,
                 UpdateChannel = choices.UpdateChannel,
             });
             await WriteAtomicAsync(value, cancellationToken).ConfigureAwait(false);
             Publish(new(value, SettingsReasonCodes.Saved, "设置已安全保存", true));
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async ValueTask SaveVideoUploadModeAsync(string mode, CancellationToken token)
+    {
+        if (mode is not ("auto" or "staging" or "direct")) { throw new ArgumentOutOfRangeException(nameof(mode)); }
+        using OperationLease operation = EnterOperation();
+        await _gate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            AppSettings value = Snapshot.Value with { VideoUploadMode = mode };
+            await WriteAtomicAsync(value, token).ConfigureAwait(false);
+            Publish(new(value, SettingsReasonCodes.VideoTransferSaved, "显卡画面处理方式已保存", true));
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async ValueTask SavePhotoSyncAsync(bool enabled, CancellationToken token)
+    {
+        using OperationLease operation = EnterOperation();
+        await _gate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            AppSettings value = Snapshot.Value with { VrcPhotoSyncEnabled = enabled };
+            await WriteAtomicAsync(value, token).ConfigureAwait(false);
+            Publish(new(value, SettingsReasonCodes.PhotoSyncSaved, "照片同步偏好已保存", true));
         }
         finally { _gate.Release(); }
     }
@@ -413,7 +441,10 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
         bool PlayspaceResetAllOffsets = false,
         bool PicoMicrophoneKeeperEnabled = false,
         float PlayspaceMultiplier = 1,
-        bool PlayspaceInertiaEnabled = false)
+        bool PlayspaceInertiaEnabled = false,
+        bool PlayspaceButtonResetDisabled = false,
+        bool VrcPhotoSyncEnabled = false,
+        string VideoUploadMode = "auto")
     {
         public AppSettings ToSettings(out bool repaired)
         {
@@ -435,7 +466,7 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
                 AutoTurnOffPhoneScreen,
                 LaunchWithSteamVr ?? false,
                 MinimizeAfterOverlayOpened,
-                PlayspaceFlingStrength, PlayspaceGravity, PlayspaceFriction, PlayspaceResetAllOffsets, PicoMicrophoneKeeperEnabled, PlayspaceMultiplier, PlayspaceInertiaEnabled);
+                PlayspaceFlingStrength, PlayspaceGravity, PlayspaceFriction, PlayspaceResetAllOffsets, PicoMicrophoneKeeperEnabled, PlayspaceMultiplier, PlayspaceInertiaEnabled, PlayspaceButtonResetDisabled, VrcPhotoSyncEnabled, VideoUploadMode is "auto" or "staging" or "direct" ? VideoUploadMode : "auto");
         }
 
         public static SettingsDocument FromSettings(AppSettings settings, bool startupKnown) => new(
@@ -452,6 +483,6 @@ public sealed class JsonAppSettingsService : IAppSettingsService, IAsyncDisposab
             startupKnown ? settings.LaunchWithSteamVr : null,
             settings.MinimizeAfterOverlayOpened,
             settings.PlayspaceFlingStrength, settings.PlayspaceGravity,
-            settings.PlayspaceFriction, settings.PlayspaceResetAllOffsets, settings.PicoMicrophoneKeeperEnabled, settings.PlayspaceMultiplier, settings.PlayspaceInertiaEnabled);
+            settings.PlayspaceFriction, settings.PlayspaceResetAllOffsets, settings.PicoMicrophoneKeeperEnabled, settings.PlayspaceMultiplier, settings.PlayspaceInertiaEnabled, settings.PlayspaceButtonResetDisabled, settings.VrcPhotoSyncEnabled, settings.VideoUploadMode);
     }
 }

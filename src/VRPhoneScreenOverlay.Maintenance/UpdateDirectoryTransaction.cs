@@ -10,7 +10,9 @@ internal static class UpdateDirectoryTransaction
         string token,
         Func<bool> startAndCheckHealth,
         Action stopUpdatedApplication,
-        Action restartRestoredApplication)
+        Action restartRestoredApplication,
+        UpdateRecoveryJournal? journal = null, Action<string>? checkpoint = null,
+        Action<TimeSpan>? retryDelay = null)
     {
         ArgumentNullException.ThrowIfNull(startAndCheckHealth);
         ArgumentNullException.ThrowIfNull(stopUpdatedApplication);
@@ -31,35 +33,48 @@ internal static class UpdateDirectoryTransaction
 
         string backup = TransactionPath(parent, "backup", token);
         string failed = TransactionPath(parent, "failed", token);
+        journal?.ValidateTransaction(install, token);
         bool installMoved = false;
         try
         {
-            Directory.Move(install, backup);
+            TranslationHistoryMigration.Copy(install, stage);
+            checkpoint?.Invoke("prepared");
+            UpdateDirectoryMove.Move(install, backup, retryDelay);
             installMoved = true;
-            Directory.Move(stage, install);
+            checkpoint?.Invoke("backed-up");
+            UpdateDirectoryMove.Move(stage, install, retryDelay);
+            checkpoint?.Invoke("installed");
             if (!startAndCheckHealth())
             {
                 throw new InvalidOperationException("Updated application did not report health.");
             }
+            journal?.MarkCommitted();
         }
-        catch
+        catch (Exception error)
         {
+            journal?.RecordFailure(error);
             stopUpdatedApplication();
             if (installMoved && Directory.Exists(backup))
             {
                 if (Directory.Exists(install))
                 {
-                    Directory.Move(install, failed);
+                    UpdateDirectoryMove.Move(install, failed, retryDelay);
                 }
 
-                Directory.Move(backup, install);
+                UpdateDirectoryMove.Move(backup, install, retryDelay);
+                journal?.MarkRolledBack();
                 restartRestoredApplication();
                 TryDeleteTransactionDirectory(failed);
+            }
+            else if (!installMoved && Directory.Exists(install))
+            {
+                restartRestoredApplication();
             }
 
             return 4;
         }
 
+        checkpoint?.Invoke("committed");
         // Health commits the installation. Recursive cleanup can partially delete
         // a backup before throwing, so it must never trigger installation rollback.
         TryDeleteTransactionDirectory(backup);

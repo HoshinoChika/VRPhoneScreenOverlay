@@ -12,6 +12,9 @@ internal static class UserFacingErrorMessages
 {
     internal static string FromReason(string reasonCode, string fallbackMessage) => reasonCode switch
     {
+        "BINDING_COMPONENT_RECOVERY_FAILED" or "BINDING_COMPONENT_RECOVERY_UNAVAILABLE" or
+        "BINDING_COMPONENT_VERSION_MISMATCH" or "BINDING_COMPONENT_HOST_FAILED" =>
+            "软件绑定辅助组件损坏或无法加载，请从官网下载完整安装包修复。",
         "UPDATE_SERVICE_NOT_CONFIGURED" or "UPDATE_SERVICE_CONFIG_INVALID" or
         "UPDATE_INSTALL_PATH_INVALID" or "UPDATE_MAINTENANCE_MISSING" =>
             "当前无法自动更新，请从官网下载完整安装包。",
@@ -21,17 +24,21 @@ internal static class UserFacingErrorMessages
         "UPDATE_PACKAGE_HASH_MISMATCH" or "UPDATE_PACKAGE_SIZE_INVALID" or "UPDATE_PACKAGE_TOO_LARGE" or
         "UPDATE_PACKAGE_LAYOUT_INVALID" or "UPDATE_PACKAGE_PATH_INVALID" =>
             "更新包校验失败，已停止更新。请重新下载。",
+        "UPDATE_PACKAGE_EXTRACTION_TIMEOUT" => "更新包解压超时，请稍后重试。",
         "UPDATE_PACKAGE_TRUNCATED" => "更新包下载不完整，请重新下载。",
         "UPDATE_CHECK_FAILED" => "检查更新失败，请稍后重试。",
         "UPDATE_MAINTENANCE_START_FAILED" or "UPDATE_INSTALL_FAILED" => "更新未完成，请重试或从官网下载完整安装包。",
         "UPDATE_SHARED_ADB_IN_USE" or "UPDATE_ADB_OWNER_UNAVAILABLE" =>
             "暂时无法更新，请退出其他正在连接手机的软件后重试。",
+        "UPDATE_HISTORY_CAPACITY_EXCEEDED" => "更新未完成，原版本及历史已保留。翻译历史超出迁移预算，请先整理历史后重试。",
+        "UPDATE_RECOVERY_UNAVAILABLE" => "更新未完成，原版本已保留。无法准备中断恢复，请稍后重试或上传诊断。",
         "UPDATE_NOT_PUBLISHED" => "暂时没有可用更新。",
 
         "NETWORK_HTTP_STATUS" or "NETWORK_RESPONSE_INVALID" or "NETWORK_RESPONSE_TOO_LARGE" =>
             "服务暂时无法使用，请稍后重试。",
         "NETWORK_TIMEOUT" => "连接超时，请检查网络后重试。",
         "NETWORK_UNAVAILABLE" => "无法连接服务，请检查网络后重试。",
+        "OPENVR_NAMESPACE_UNAVAILABLE" => "SteamVR 通信入口不可用，已暂停连接尝试；请在方便时重启 SteamVR。",
         "NETWORK_INSECURE_SCHEME" => "无法安全连接服务，请稍后重试。",
 
         "DIAGNOSTICS_SERVICE_NOT_CONFIGURED" => "当前无法上传诊断，请打开软件日志，将诊断包提供给作者。",
@@ -42,8 +49,8 @@ internal static class UserFacingErrorMessages
         "DIAGNOSTICS_FOLDER_OPEN_TIMEOUT" => "打开日志文件夹超时，请重试。",
         "DIAGNOSTICS_FOLDER_OPEN_FAILED" => "无法打开日志文件夹，请检查访问权限后重试。",
 
-        "OPENVR_STARTUP_REGISTRATION_FAILED" => "自动启动设置未完成，请确认 SteamVR 已启动后重试。",
-        "OPENVR_STARTUP_REGISTRATION_UNCONFIRMED" => "无法确认自动启动设置，请检查 SteamVR 状态后重试。",
+        "OPENVR_STARTUP_REGISTRATION_FAILED" => "SteamVR 启动登记校验未通过，自动启动设置尚未生效；请重试或上传诊断。",
+        "OPENVR_STARTUP_REGISTRATION_UNCONFIRMED" => "尚未确认 SteamVR 启动登记；请重试或上传诊断。",
         "OPENVR_STARTUP_REGISTRATION_TIMEOUT" => "连接 SteamVR 超时，请确认已启动后重试。",
         "OPENVR_INITIALIZATION_FAILED" or "OPENVR_INITIALIZATION_UNEXPECTED" or "OPENVR_OVERLAY_INTERFACE_MISSING" =>
             "无法连接 SteamVR，请确认已启动后重试。",
@@ -79,6 +86,8 @@ internal static class UserFacingErrorMessages
             "未能及时显示手机画面，请重新连接手机后重试。",
         "VIDEO_DECODE_CODEC_UNSUPPORTED" or "VIDEO_OVERLAY_CODEC_UNSUPPORTED" or "MEDIA_H264_NV12_NOT_SUPPORTED" =>
             "当前手机画面暂不兼容，请上传诊断包联系作者。",
+        "MEDIA_FOUNDATION_UNAVAILABLE" =>
+            "当前系统缺少或无法加载 Windows 媒体组件，无法显示手机画面。Windows N 版请安装微软 Media Feature Pack（媒体功能包）后重试；其他版本请恢复系统媒体组件。",
         "MEDIA_H264_DECODER_NOT_FOUND" or "MEDIA_H264_INITIALIZATION_FAILED" =>
             "无法打开手机画面，请重启软件后重试；仍失败请上传诊断包。",
         "MEDIA_H264_DECODE_FAILED" or "MEDIA_H264_DRAIN_FAILED" or "MEDIA_H264_OUTPUT_EMPTY" or "MEDIA_H264_OUTPUT_MISSING" =>

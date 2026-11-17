@@ -16,7 +16,8 @@ internal interface IOpenVrApplicationRegistry
 
 internal static class OpenVrApplicationRegistration
 {
-    internal static SteamVrStartupDiagnostic Apply(string manifestPath, bool? enabled, IOpenVrApplicationRegistry registry)
+    internal static SteamVrStartupDiagnostic Apply(string manifestPath, bool? enabled, IOpenVrApplicationRegistry registry,
+        bool runtimeOnly = false)
     {
         SteamVrStartupDiagnostic evidence = new("manifest", RequestedAutoLaunch: enabled);
         try
@@ -36,7 +37,19 @@ internal static class OpenVrApplicationRegistration
             evidence = evidence with { Stage = "executable", ExecutableExists = File.Exists(expected) };
             if (!evidence.ExecutableExists) { return evidence; }
 
-            string? previous = ReadBinary(registry);
+            // A running overlay needs its application identity, not installation relocation
+            // or auto-launch verification. Keep the strict maintenance path separate.
+            if (runtimeOnly)
+            {
+                EVRApplicationError runtimeAdded = registry.Add(manifest);
+                return evidence with
+                {
+                    Stage = runtimeAdded == EVRApplicationError.None ? "confirmed" : "add",
+                    NativeError = runtimeAdded == EVRApplicationError.None ? null : runtimeAdded.ToString()
+                };
+            }
+
+            string? previous = ReadBinary(registry, out _);
             string? previousDirectory = previous is null ? null : Path.GetDirectoryName(previous);
             if (previousDirectory is not null)
             {
@@ -58,10 +71,12 @@ internal static class OpenVrApplicationRegistration
             evidence = evidence with { Stage = "add" };
             EVRApplicationError added = registry.Add(manifest);
             if (added != EVRApplicationError.None) { return evidence with { NativeError = added.ToString() }; }
+            string? registeredBinary = ReadBinary(registry, out string? readFailure);
             evidence = evidence with
             {
                 Stage = "path-readback",
-                RegisteredPathMatches = string.Equals(ReadBinary(registry), expected, StringComparison.OrdinalIgnoreCase)
+                RegisteredPathMatches = string.Equals(registeredBinary, expected, StringComparison.OrdinalIgnoreCase),
+                NativeError = readFailure
             };
             if (!evidence.RegisteredPathMatches) { return evidence; }
             if (enabled is bool requested)
@@ -79,14 +94,17 @@ internal static class OpenVrApplicationRegistration
         { return evidence with { NativeError = error.GetType().Name }; }
     }
 
-    private static string? ReadBinary(IOpenVrApplicationRegistry registry)
+    private static string? ReadBinary(IOpenVrApplicationRegistry registry, out string? failure)
     {
+        failure = null;
         (string binary, EVRApplicationError error) = registry.Read(EVRApplicationProperty.BinaryPath_String);
-        if (error != EVRApplicationError.None || string.IsNullOrWhiteSpace(binary)) { return null; }
+        if (error != EVRApplicationError.None) { failure = error.ToString(); return null; }
+        if (string.IsNullOrWhiteSpace(binary)) { failure = "EMPTY_BINARY_PATH"; return null; }
         if (!Path.IsPathFullyQualified(binary))
         {
             (string working, EVRApplicationError directoryError) = registry.Read(EVRApplicationProperty.WorkingDirectory_String);
-            if (directoryError != EVRApplicationError.None || !Path.IsPathFullyQualified(working)) { return null; }
+            if (directoryError != EVRApplicationError.None) { failure = directoryError.ToString(); return null; }
+            if (!Path.IsPathFullyQualified(working)) { failure = "INVALID_WORKING_DIRECTORY"; return null; }
             binary = Path.Combine(working, binary);
         }
         return Path.GetFullPath(binary);

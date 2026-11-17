@@ -88,9 +88,10 @@ public sealed class SettingsApplicationService(
         AppSettings previous = settings.Snapshot.Value;
         if (candidate == previous) { return new(false, false); }
         bool handChanged = candidate.ControllerHand != previous.ControllerHand;
-        bool videoChanged = candidate.VideoResolutionPercent != previous.VideoResolutionPercent ||
+        bool parametersChanged = candidate.VideoResolutionPercent != previous.VideoResolutionPercent ||
             candidate.VideoBitrateMbps != previous.VideoBitrateMbps ||
             candidate.VideoMaximumFramesPerSecond != previous.VideoMaximumFramesPerSecond;
+        bool videoChanged = parametersChanged || candidate.VideoUploadMode != previous.VideoUploadMode;
         bool overlayActive = overlay.Snapshot.State is PhoneOverlayState.Starting or PhoneOverlayState.Running;
         string? deviceKey = phone.Snapshot.SelectedDevice?.DeviceKey;
         string? changeId = null;
@@ -98,7 +99,7 @@ public sealed class SettingsApplicationService(
         bool restartAttempted = false;
         try
         {
-            if (overlayActive && videoChanged && videoTrials is not null)
+            if (overlayActive && parametersChanged && videoTrials is not null)
             { changeId = await videoTrials.StageChangeAsync(Context(), VideoParameters.From(previous), VideoParameters.From(candidate), cancellationToken).ConfigureAwait(false); }
             await settings.SaveChoicesAsync(candidate, cancellationToken).ConfigureAwait(false);
             if (handChanged)

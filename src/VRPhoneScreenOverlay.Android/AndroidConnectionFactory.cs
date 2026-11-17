@@ -44,7 +44,7 @@ public static class AndroidConnectionFactory
 
     public static AndroidSessionFactories CreateDefaultSessionFactories(
         IAndroidConnectionService connection,
-        IAndroidConnectionLogSink logSink)
+        IAndroidConnectionLogSink logSink, VRPhoneScreenOverlay.Contracts.IPhoneClipboardSink? clipboard = null)
     {
         AndroidConnectionService service = RequireDefaultConnection(connection);
         ArgumentNullException.ThrowIfNull(logSink);
@@ -56,7 +56,7 @@ public static class AndroidConnectionFactory
         return new AndroidSessionFactories(
             new ScrcpyVideoSessionFactory(service, launcher, logSink),
             new ScrcpyAudioSessionFactory(service, launcher, logSink),
-            new ScrcpyControlSessionFactory(service, launcher, logSink));
+            new ScrcpyControlSessionFactory(service, launcher, logSink, clipboard));
     }
 
     public static IAndroidVideoSessionFactory CreateDefaultVideoSessions(
@@ -71,8 +71,8 @@ public static class AndroidConnectionFactory
 
     public static IAndroidControlSessionFactory CreateDefaultControlSessions(
         IAndroidConnectionService connection,
-        IAndroidConnectionLogSink logSink) =>
-        CreateDefaultSessionFactories(connection, logSink).Control;
+        IAndroidConnectionLogSink logSink, VRPhoneScreenOverlay.Contracts.IPhoneClipboardSink? clipboard = null) =>
+        CreateDefaultSessionFactories(connection, logSink, clipboard).Control;
 
     public static IAndroidAudioSessionFactory CreateDefaultAudioSessions(
         IAndroidConnectionService connection,

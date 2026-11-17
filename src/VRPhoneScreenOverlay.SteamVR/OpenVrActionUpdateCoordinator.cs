@@ -32,6 +32,30 @@ internal sealed class OpenVrActionUpdateCoordinator
     // coalesce while the worker is busy; no command is created per pointer move.
     private OpenVrPlayspaceControlRequest? _pendingControls;
     private long _coalescedControls;
+    // Capacity one, latest click wins; consumed by the playspace worker on a frame.
+    // Expires after 500 ms; cleared on poller release or suspended motion.
+    private bool _pendingReset;
+    private long _resetRequestedAt;
+    private long _coalescedResets;
+    public long CoalescedResets { get { lock (_gate) { return _coalescedResets; } } }
+    public void RequestReset()
+    {
+        lock (_gate)
+        {
+            if (_pendingReset) { _coalescedResets++; }
+            _pendingReset = true;
+            _resetRequestedAt = Environment.TickCount64;
+        }
+    }
+    public bool TakeReset()
+    {
+        lock (_gate)
+        {
+            bool requested = _pendingReset && Environment.TickCount64 - _resetRequestedAt <= 500;
+            _pendingReset = false;
+            return requested;
+        }
+    }
 
     public long CoalescedControls { get { lock (_gate) { return _coalescedControls; } } }
 
@@ -139,6 +163,7 @@ internal sealed class OpenVrActionUpdateCoordinator
         lock (_gate)
         {
             _phonePollerActive = false;
+            _pendingReset = false;
             _inputSample = default;
             _pendingControls = null;
         }

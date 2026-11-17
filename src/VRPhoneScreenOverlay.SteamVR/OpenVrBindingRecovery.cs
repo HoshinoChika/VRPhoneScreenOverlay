@@ -23,14 +23,18 @@ public static class OpenVrBindingRecovery
     public static bool HasSavedBindingChanged() =>
         OpenVrBindingStartup.HasSavedBindingChanged();
 
+    public static OpenVrBindingResult PrepareLocalFiles() => OpenVrBindingStartup.Refresh();
+
+    public static ValueTask<OpenVrBindingResult> ActivateLocalBindingAsync(CancellationToken token) => OpenVrBindingStartup.ActivateAsync(token);
+
     public static OpenVrBindingResult PrepareLocalBinding()
     {
         lock (_gate)
         {
             try
             {
-                OpenVrRuntimeHost.Shutdown();
-                return OpenVrBindingStartup.Refresh();
+                OpenVrBindingResult prepared = PrepareLocalFiles();
+                return prepared.Succeeded ? OpenVrBindingStartup.ActivateAsync(CancellationToken.None, OpenVrRuntimeHost.Shutdown).AsTask().GetAwaiter().GetResult() : prepared;
             }
             catch (Exception exception) when (
                 exception is IOException or UnauthorizedAccessException or InvalidDataException or

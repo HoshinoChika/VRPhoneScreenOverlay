@@ -1,10 +1,15 @@
+using VRPhoneScreenOverlay.Contracts;
+
 namespace VRPhoneScreenOverlay.Session;
+
+public readonly record struct VideoFrameStageDurations(double? ReceiveToDecodeStart, double? DecodeStartToOutput,
+    double? OutputToSubmit, double? ConversionCall, double? SubmissionCall, double? CaptureToReceive = null);
 
 /// <summary>
 /// Throughput and latency counters for a running phone overlay session.
 /// </summary>
 /// <remarks>
-/// Kept separate from the frame loop because these are twelve interlocking counters whose only
+/// Kept separate from the frame loop because these are related counters whose only
 /// job is arithmetic. All time arrives as explicit elapsed values, so the maths is deterministic
 /// and testable without a clock.
 /// </remarks>
@@ -12,8 +17,18 @@ public sealed class PhoneOverlayMetrics
 {
     private long _framesAtLastSample;
     private long _encodedBytesAtLastSample;
-    private double _totalLatencyMilliseconds;
-    private long _latencySampleCount;
+    private readonly VideoLatencyHistogram _capture = new();
+    private readonly VideoLatencyHistogram _receive = new();
+    private readonly VideoLatencyHistogram _decode = new();
+    private readonly VideoLatencyHistogram _output = new();
+    private readonly VideoLatencyHistogram _conversion = new();
+    private readonly VideoLatencyHistogram _submission = new();
+    private readonly VideoLatencyHistogram _captureToReceive = new();
+    public long LatencySampleCount => _capture.SampleCount;
+    public long UnavailableLatencySampleCount => _capture.MissingSamples;
+    public long RejectedLatencySampleCount => _capture.RejectedSamples;
+    public bool HasLatencySamples => LatencySampleCount > 0;
+    public VideoLatencyBreakdown? LatencyBreakdown { get; private set; }
 
     /// <summary>Frames submitted to the headset since the session started.</summary>
     public long SubmittedFrames { get; private set; }
@@ -32,9 +47,9 @@ public sealed class PhoneOverlayMetrics
 
     /// <summary>
     /// Mean capture-to-submit latency. Zero until at least one frame carried a usable capture
-    /// timestamp.
+    /// timestamp; consult HasLatencySamples to distinguish unavailable data from a measured zero.
     /// </summary>
-    public double AverageLatencyMilliseconds { get; private set; }
+    public double AverageLatencyMilliseconds => _capture.Mean ?? 0;
 
     /// <summary>
     /// Counts one submitted frame, folding in its end-to-end latency when measurable.
@@ -44,18 +59,22 @@ public sealed class PhoneOverlayMetrics
     /// timestamp. Values outside 0–5000 ms are ignored as implausible rather than allowed to
     /// distort the mean.
     /// </param>
-    public void RecordSubmittedFrame(double? latencyMilliseconds)
+    /// <param name="stages">Local stage durations; unavailable values remain null.</param>
+    public void RecordSubmittedFrame(double? latencyMilliseconds, VideoFrameStageDurations stages = default)
     {
         SubmittedFrames++;
-        if (latencyMilliseconds is not double latency || latency is < 0 or > 5_000)
-        {
-            return;
-        }
-
-        _totalLatencyMilliseconds += latency;
-        _latencySampleCount++;
-        AverageLatencyMilliseconds = _totalLatencyMilliseconds / _latencySampleCount;
+        _capture.Record(latencyMilliseconds);
+        _receive.Record(stages.ReceiveToDecodeStart);
+        _decode.Record(stages.DecodeStartToOutput);
+        _output.Record(stages.OutputToSubmit);
+        _conversion.Record(stages.ConversionCall);
+        _submission.Record(stages.SubmissionCall);
+        _captureToReceive.Record(stages.CaptureToReceive);
+        if (SubmittedFrames == 1) { SampleLatency(); }
     }
+
+    private void SampleLatency() => LatencyBreakdown = new(SubmittedFrames, _capture.Snapshot(),
+        _receive.Snapshot(), _decode.Snapshot(), _output.Snapshot(), _conversion.Snapshot(), _submission.Snapshot(), _captureToReceive.Snapshot());
 
     /// <summary>
     /// Recomputes frame rate and bitrate once <paramref name="sinceLastSample"/> reaches one
@@ -75,6 +94,7 @@ public sealed class PhoneOverlayMetrics
             return false;
         }
 
+        SampleLatency();
         TotalEncodedBytes = totalEncodedBytes;
         long windowBytes = Math.Max(0, totalEncodedBytes - _encodedBytesAtLastSample);
         FramesPerSecond = (SubmittedFrames - _framesAtLastSample) / windowSeconds;

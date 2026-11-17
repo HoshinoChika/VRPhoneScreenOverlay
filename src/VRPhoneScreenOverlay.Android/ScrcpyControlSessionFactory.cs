@@ -5,7 +5,7 @@ namespace VRPhoneScreenOverlay.Android;
 internal sealed class ScrcpyControlSessionFactory(
     AndroidConnectionService connection,
     ScrcpySessionLauncher launcher,
-    IAndroidConnectionLogSink log) : IAndroidControlSessionFactory
+    IAndroidConnectionLogSink log, IPhoneClipboardSink? clipboard = null) : IAndroidControlSessionFactory
 {
     private static readonly TimeSpan _startupTimeout = TimeSpan.FromSeconds(15);
     private readonly AndroidConnectionService _connection = connection;
@@ -37,7 +37,7 @@ internal sealed class ScrcpyControlSessionFactory(
                 new ScrcpySessionLaunchRequest(
                     device,
                     ScrcpySessionKind.Control,
-                    scid => BuildServerArguments(device.Serial, scid),
+                    scid => BuildServerArguments(device.Serial, scid, clipboard is not null),
                     deadline),
                 cancellationToken)
             .ConfigureAwait(false);
@@ -55,7 +55,7 @@ internal sealed class ScrcpyControlSessionFactory(
                 transport,
                 protocol,
                 displaySize,
-                _log);
+                _log, clipboard);
         }
         catch
         {
@@ -104,7 +104,7 @@ internal sealed class ScrcpyControlSessionFactory(
         return size;
     }
 
-    private static string[] BuildServerArguments(string serial, int scid) =>
+    private static string[] BuildServerArguments(string serial, int scid, bool clipboard = false) =>
     [
         "-s",
         serial,
@@ -120,7 +120,7 @@ internal sealed class ScrcpyControlSessionFactory(
         "audio=false",
         "control=true",
         "tunnel_forward=true",
-        "clipboard_autosync=false",
+        clipboard ? "clipboard_autosync=true" : "clipboard_autosync=false",
         "send_device_meta=false",
         "send_frame_meta=false",
         "send_stream_meta=false",

@@ -8,8 +8,8 @@
       "vrphonescreenoverlay.network": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
-          "VRPhoneScreenOverlay.Protocols": "[0.2.8, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.3.0, )",
+          "VRPhoneScreenOverlay.Protocols": "[0.3.0, )"
         }
       },
       "vrphonescreenoverlay.protocols": {

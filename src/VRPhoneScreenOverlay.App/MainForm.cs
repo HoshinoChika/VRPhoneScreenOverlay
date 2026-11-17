@@ -14,8 +14,10 @@ namespace VRPhoneScreenOverlay.App;
 
 internal sealed partial class MainForm : ExitConfirmationForm
 {
+    private readonly UiNotificationDispatcher _notifications;
     protected override void ShowExitConfirmation()
     {
+        if (ExitCommitted) { _closeConfirmation.BringToFront(); return; }
         if (_installingUpdate) { _closeConfirmation.BringToFront(); return; }
         _closeConfirmation.ConfigureClose();
         _closeConfirmation.Visible = true;
@@ -98,6 +100,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
     private readonly PhoneBindingDefaultsService _bindingDefaults;
     private readonly PhoneBindingSynchronizationService? _bindingSynchronization;
     private OpenVrBindingResult? _startupSteamVrWarning;
+    private OpenVrBindingResult? _lastStartupRegistration;
     private readonly SteamVrStartupService? _startupService;
     private CheckBox _playspaceDragToggle = null!;
     private FixedStepSelector<VideoResolutionProfile> _resolutionSelector = null!;
@@ -116,10 +119,13 @@ internal sealed partial class MainForm : ExitConfirmationForm
     private bool _immediateSettingsInProgress;
     private bool _bindingRecoveryInProgress;
     private bool _updatingSettingsControls;
+    private VideoPageView _videoView = null!;
+    private VideoUploadModeSelectorControl _uploadModeSelector = null!;
     private AppSettings _pendingSettings;
     private bool _settingsDirty;
     private bool _aboutOperationInProgress;
     private PhoneOverlayButtonProgress _phoneOverlayButtonProgress;
+    private readonly VrMenuService? _vrMenu;
     private UpdateRelease? _availableUpdate;
     private Icon? _windowIcon;
 
@@ -140,11 +146,14 @@ internal sealed partial class MainForm : ExitConfirmationForm
         Func<string>? picoStatus = null, SettingsApplicationService? settingsApplication = null,
         PhoneBindingSynchronizationService? bindingSynchronization = null, OpenVrBindingResult? startupSteamVrWarning = null,
         string? updateRestartBlockedReason = null, SteamVrStartupService? startupService = null,
-        TroubleshootingWorkflow? troubleshooting = null)
+        DiagnosticCaptureService? capture = null, VrMenuService? vrMenu = null, Func<Task>? armExitDeadline = null)
+        : base(armExitDeadline)
     {
+        _notifications = new(this);
+        _vrMenu = vrMenu;
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         _startupService = startupService;
-        _updateRestartBlockedReason = updateRestartBlockedReason is UpdateInstallAvailability.SharedAdbInUse or UpdateInstallAvailability.OwnerUnavailable
+        _updateRestartBlockedReason = updateRestartBlockedReason is UpdateInstallAvailability.SharedAdbInUse or UpdateInstallAvailability.OwnerUnavailable or UpdateReasonCodes.RecoveryUnavailable or UpdateReasonCodes.HistoryCapacityExceeded or UpdateReasonCodes.InstallFailed
             ? updateRestartBlockedReason : null;
         _sharing = sharing ?? throw new ArgumentNullException(nameof(sharing));
         _phone = phone ?? throw new ArgumentNullException(nameof(phone));
@@ -159,10 +168,11 @@ internal sealed partial class MainForm : ExitConfirmationForm
         _bindingDefaults = new();
         _bindingSynchronization = bindingSynchronization;
         _startupSteamVrWarning = startupSteamVrWarning is { Succeeded: false } ? startupSteamVrWarning : null;
+        _lastStartupRegistration = startupService?.Snapshot.Registration;
         if (_bindingSynchronization is not null) { _bindingSynchronization.Changed += OnBindingSynchronizationChanged; }
         _connectionManagement = phone is IAndroidConnectionManagementService management
             ? new(phone, management, mediaSession, () => BuildVideoOptions(_settings.Snapshot.Value),
-                () => _settings.Snapshot.Value.AutoOpenPhoneOverlay && _settingsApplication.AutomaticVideoAllowed) : null;
+                () => (_vrMenu?.OpenRequested ?? _settings.Snapshot.Value.AutoOpenPhoneOverlay) && _settingsApplication.AutomaticVideoAllowed) : null;
         _updateService = updateService ?? throw new ArgumentNullException(nameof(updateService));
         _diagnosticsService = diagnosticsService ?? throw new ArgumentNullException(nameof(diagnosticsService));
         _connectionLogPath = connectionLogPath;
@@ -173,7 +183,8 @@ internal sealed partial class MainForm : ExitConfirmationForm
         _lastPersistedSettings = _pendingSettings;
 
         InitializeVisualTree(connectionLogPath is not null);
-        InitializeTroubleshooting(troubleshooting);
+        InitializeCapture(capture);
+        InitializeMemoryConsent();
         _settingsView.PicoStatusProvider = picoStatus;
         if (_startupService is not null) { _settingsView.StartupStatusProvider = () => SteamVrStartupPresentation.Read(_startupService.Snapshot); }
         ApplyMotionRuntime(_motionRuntime);
@@ -185,7 +196,9 @@ internal sealed partial class MainForm : ExitConfirmationForm
         _phoneControl.StateChanged += OnPhoneControlStateChanged;
         _mediaSession.StateChanged += OnPhoneMediaSessionStateChanged;
         _playspaceDrag.StateChanged += OnPlayspaceDragStateChanged;
+        if (_vrMenu is not null) { _vrMenu.StateChanged += OnVrMenuStateChanged; }
         _settings.Changed += OnSettingsChanged;
+        if (_startupService is not null) { _startupService.StateChanged += OnSteamVrStartupStateChanged; }
         _settingsApplication.VideoRecoveryChanged += OnVideoRecoveryChanged;
         _deviceList.MouseClick += OnDeviceSelected;
         _deviceList.KeyDown += OnDeviceListKeyDown;
@@ -215,6 +228,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
         _resolutionSelector.SelectedValueChanged += OnSettingChoiceChanged;
         _bitrateSelector.SelectedValueChanged += OnSettingChoiceChanged;
         _frameRateSelector.SelectedValueChanged += OnSettingChoiceChanged;
+        _uploadModeSelector.SelectedValueChanged += OnSettingChoiceChanged;
         _updateChannelSelector.SelectedValueChanged += OnSettingChoiceChanged;
         _applySettingsButton.Click += OnApplySettingsClicked;
         _discardSettingsButton.Click += OnDiscardSettingsClicked;
@@ -246,78 +260,52 @@ internal sealed partial class MainForm : ExitConfirmationForm
     }
 
     private async void OnUploadDiagnosticsClicked(object? sender, EventArgs eventArgs) =>
-        await UploadDiagnosticsAsync(startAi: false);
+        await UploadDiagnosticsAsync();
 
-    private async Task UploadDiagnosticsAsync(bool startAi)
+    private async Task UploadDiagnosticsAsync()
     {
         if (_aboutOperationInProgress || _operationInProgress) { return; }
-        if (startAi && !UiInputPolicy.CanRequestAi(_diagnosticIssueTypeComboBox.SelectedIndex, _diagnosticDescriptionTextBox.Text)) { return; }
-        if (startAi)
-        {
-            bool allowed = false;
-            _aboutPage.DiagnosticReportStatus.Text = "正在确认诊断服务是否可用…";
-            await RunAboutOperationAsync(async token =>
-            {
-                if (_troubleshooting is null) { _aboutPage.DiagnosticReportStatus.Text = "诊断服务暂不可用，可以使用普通上传。"; return; }
-                VRPhoneScreenOverlay.Protocols.TroubleshootingAvailability availability = await _troubleshooting.AvailabilityAsync(token);
-                allowed = availability.Allowed;
-                _aboutPage.DiagnosticReportStatus.Text = allowed ? string.Empty : TroubleshootingPresentation.Unavailable(availability);
-            }, _aboutPage.DiagnosticReportStatus);
-            if (!allowed) { return; }
-        }
-        string? uploadedId = null;
         if (!TryCreateDiagnosticUserReport(out DiagnosticUserReport userReport))
         {
             return;
         }
 
+        bool? includeMemory = await ConfirmMemoryUploadAsync();
+        if (includeMemory is null || _formLifetime.IsCancellationRequested) { return; }
         _aboutPage.HideDiagnosticReport();
-        if (startAi) { SetOperationControls(false); }
-        try
+        await RunAboutOperationAsync(async cancellationToken =>
         {
-            await RunAboutOperationAsync(async cancellationToken =>
+            DateTimeOffset windowEnd = DateTimeOffset.UtcNow;
+            if (includeMemory == true) { SetControlText(_aboutPage.DiagnosticsStatus, "正在准备已同意的内存现场…"); }
+            ConsentedMemoryAttachment? attachment = includeMemory == true && _captureService is not null
+                ? await _captureService.PrepareConsentedUploadAsync(cancellationToken, windowEnd) : null;
+            DiagnosticUploadContext context = CreateDiagnosticContext(userReport) with { MemoryAttachment = attachment, CollectionEnd = attachment?.WindowEnd ?? windowEnd };
+            Progress<DiagnosticProgress> progress = new(value =>
             {
-                DiagnosticUploadContext context = CreateDiagnosticContext(userReport);
-                Progress<DiagnosticProgress> progress = new(value =>
-                {
-                    string text = value.TotalBytes > 0 && value.CompletedBytes > 0
-                        ? $"{value.Phase} {value.CompletedBytes * 100 / value.TotalBytes}%"
-                        : value.Phase;
-                    SetControlText(_aboutPage.DiagnosticsStatus, text);
-                });
-                DiagnosticUploadResult result = await _diagnosticsService.BuildAndUploadAsync(
-                    context,
-                    progress,
-                    cancellationToken);
-                SetControlText(_aboutPage.DiagnosticsStatus, result.Succeeded
-                    ? result.CoverageIncomplete ? "已上传，但部分日志可能缺失" : "诊断包已上传"
-                    : result.RetainedBundlePath is not null
-                        ? result.ReasonCode == DiagnosticsReasonCodes.BundleSizeInvalid
-                            ? "诊断包过大，无法上传；已保存在本机"
-                            : "上传失败；诊断包已保存在本机，可打开软件日志查看"
-                        : UserFacingErrorMessages.FromReason(result.ReasonCode, result.Message));
-                SetControlForeColor(
-                    _aboutPage.DiagnosticsStatus,
-                    result.Succeeded ? result.CoverageIncomplete ? UiPalette.Warning : UiPalette.Success : UiPalette.Danger);
-                if (result.Succeeded) { uploadedId = result.UploadId; }
-            }, _aboutPage.DiagnosticsStatus).ConfigureAwait(true);
-        }
-        finally
-        {
-            if (startAi && !IsDisposed && !Disposing) { SetOperationControls(true); }
-        }
-        // RunAboutOperationAsync has released the upload busy flag before automatic AI diagnosis starts.
-        if (startAi && uploadedId is not null && !IsDisposed && !Disposing)
-        {
-            _aiUploadId = uploadedId;
-            MainShellView shell = Controls.OfType<MainShellView>().Single();
-            shell.ShowMainPage(_aboutPage, shell.AboutNavigation);
-            _aboutPage.ShowTroubleshooting();
-            _aboutPage.TroubleshootingPage.SetBusy(false);
-            _aboutPage.TroubleshootingPage.StatusLabel.Text = _troubleshooting is null
-                ? "DeepSeek诊断暂不可用，诊断包已上传。" : "诊断包已上传，正在开始DeepSeek诊断…";
-            await RunAiDiagnosisAsync();
-        }
+                string text = value.TotalBytes > 0 && value.CompletedBytes > 0
+                    ? $"{value.Phase} {value.CompletedBytes * 100 / value.TotalBytes}%"
+                    : value.Phase;
+                SetControlText(_aboutPage.DiagnosticsStatus, text);
+            });
+            DiagnosticUploadResult result = await _diagnosticsService.BuildAndUploadAsync(
+                context,
+                progress,
+                cancellationToken);
+            SetControlText(_aboutPage.DiagnosticsStatus, result.Succeeded
+                ? result.CoverageIncomplete ? "已上传，但部分日志可能缺失" : "诊断包已上传"
+                : result.RetainedBundlePath is not null
+                    ? result.ReasonCode == DiagnosticsReasonCodes.BundleSizeInvalid
+                        ? "诊断包过大，无法上传；已保存在本机"
+                        : "上传失败；诊断包已保存在本机，可打开软件日志查看"
+                    : UserFacingErrorMessages.FromReason(result.ReasonCode, result.Message));
+            if (result.Succeeded && includeMemory == true)
+            {
+                _aboutPage.DiagnosticsStatus.Text += attachment is null ? "（最近6小时暂无可用内存现场）" : "（已附带本次同意的内存现场）";
+            }
+            SetControlForeColor(
+                _aboutPage.DiagnosticsStatus,
+                result.Succeeded ? result.CoverageIncomplete ? UiPalette.Warning : UiPalette.Success : UiPalette.Danger);
+        }, _aboutPage.DiagnosticsStatus).ConfigureAwait(true);
     }
 
     private DiagnosticUploadContext CreateDiagnosticContext(DiagnosticUserReport userReport)
@@ -340,7 +328,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
             new(_lastUpdateCheckAt, _lastUpdateReason, _lastUpdateFailureKind, _lastUpdateHttpStatus),
             userReport, _connectionLogPath, _settingsApplication.VideoTrials,
             _settingsApplication.AutomaticVideoAllowed, _settingsApplication.VideoRecovery,
-            _bindingSynchronization?.SnapshotRetention, _startupService?.Snapshot, _phoneControl.FailureHistory, _mediaSession.StartupDiagnostic));
+            _bindingSynchronization?.SnapshotRetention, _startupService?.Snapshot, _phoneControl.FailureHistory, _mediaSession.StartupDiagnostic, _detectedController));
     }
 
     private async void OnOpenDiagnosticLogsClicked(object? sender, EventArgs eventArgs)
@@ -381,8 +369,6 @@ internal sealed partial class MainForm : ExitConfirmationForm
 
     private void UpdateDiagnosticUploadButton()
     {
-        _aboutPage.DeepSeekDiagnosticsButton.Enabled = !_aboutOperationInProgress && !_operationInProgress &&
-            UiInputPolicy.CanRequestAi(_diagnosticIssueTypeComboBox.SelectedIndex, _diagnosticDescriptionTextBox.Text);
         _uploadDiagnosticsButton.Enabled = !_aboutOperationInProgress &&
             _diagnosticIssueTypeComboBox.SelectedIndex >= 0;
     }
@@ -431,8 +417,6 @@ internal sealed partial class MainForm : ExitConfirmationForm
         _prepareDiagnosticsButton.Enabled = false;
         _aboutPage.OpenDiagnosticLogsButton.Enabled = false;
         _uploadDiagnosticsButton.Enabled = false;
-        _aboutPage.DeepSeekDiagnosticsButton.Enabled = false;
-        _aboutPage.ViewAiHistoryButton.Enabled = false;
         try
         {
             string? error = await AboutOperationRunner.RunAsync(operation, _formLifetime.Token);
@@ -451,7 +435,6 @@ internal sealed partial class MainForm : ExitConfirmationForm
                 _checkUpdateButton.Enabled = true;
                 _prepareDiagnosticsButton.Enabled = true;
                 _aboutPage.OpenDiagnosticLogsButton.Enabled = true;
-                _aboutPage.ViewAiHistoryButton.Enabled = true;
                 UpdateDiagnosticUploadButton();
             }
         }
@@ -524,11 +507,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
 
     private void OnRuntimeStateChanged(object? sender, AppRuntimeStateChangedEventArgs eventArgs)
     {
-        if (InvokeRequired)
-        {
-            BeginInvoke(() => OnRuntimeStateChanged(sender, eventArgs));
-            return;
-        }
+        if (_notifications.Dispatch(nameof(OnRuntimeStateChanged), () => OnRuntimeStateChanged(sender, eventArgs))) { return; }
 
         SetControlText(_runtimeStatus, FormatRuntimeStatus());
     }
@@ -540,11 +519,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
             return;
         }
 
-        if (InvokeRequired)
-        {
-            BeginInvoke(() => OnPhoneStateChanged(sender, eventArgs));
-            return;
-        }
+        if (_notifications.Dispatch(nameof(OnPhoneStateChanged), () => OnPhoneStateChanged(sender, eventArgs))) { return; }
 
         UpdatePhoneView(eventArgs.Snapshot);
         ConfigurePhoneAutomation();
@@ -648,6 +623,26 @@ internal sealed partial class MainForm : ExitConfirmationForm
 
     private async void OnPhoneOverlayClicked(object? sender, EventArgs eventArgs)
     {
+        if (_vrMenu is not null)
+        {
+            bool open = !_vrMenu.OpenRequested;
+            await RunUiOperationAsync(open ? "正在打开 VR 浮窗…" : "正在关闭 VR 浮窗…", async token =>
+            {
+                await _vrMenu.SetOpenAsync(open, token, VrMenuRequestSource.MainWindow);
+                ConfigurePhoneAutomation();
+                if (open) { _mediaSession.RequestAutomaticStart(); }
+                if (open && _phone.Snapshot.IsReady && !_settingsApplication.AutomaticVideoAllowed)
+                {
+                    // Explicit user opening retains the existing parameter-recovery
+                    // acknowledgement; background phone connections never bypass it.
+                    await StartPhoneOverlayAsync(_phone.Snapshot.SelectedDevice?.DeviceKey, token);
+                }
+                if (open && _settings.Snapshot.Value.MinimizeAfterOverlayOpened && !_closeConfirmation.Visible)
+                { MinimizeToTray(); }
+            });
+            UpdatePhoneOverlayButton();
+            return;
+        }
         PhoneOverlayState state = _phoneOverlay.Snapshot.State;
         bool closing = state is PhoneOverlayState.Starting or PhoneOverlayState.Running;
         if (!closing && _wirelessOperation is not null && !_qrWaiting) { return; }
@@ -771,6 +766,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
             VideoResolutionPercent = resolution.Percent,
             VideoBitrateMbps = bitrate,
             VideoMaximumFramesPerSecond = frameRate,
+            VideoUploadMode = _uploadModeSelector.SelectedIndex switch { 1 => "staging", 2 => "direct", _ => "auto" },
             UpdateChannel = updateChannel,
         };
         _settingsDirty = HasPendingApplyChanges(
@@ -857,11 +853,21 @@ internal sealed partial class MainForm : ExitConfirmationForm
         }
     }
 
+    private void OnVrMenuStateChanged(object? sender, EventArgs args)
+    {
+        if (_notifications.Dispatch(nameof(OnVrMenuStateChanged), () => OnVrMenuStateChanged(sender, args))) { return; }
+        if (IsDisposed || Disposing || _vrMenu is null) { return; }
+        ConfigurePhoneAutomation();
+        if (_vrMenu.OpenRequested && _vrMenu.RuntimeReady) { _mediaSession.RequestAutomaticStart(); }
+        UpdatePhoneOverlayButton();
+    }
+
     private void ConfigurePhoneAutomation()
     {
         AppSettings settings = _settings.Snapshot.Value;
+        _vrMenu?.ConfigureAutoOpen(settings.AutoOpenPhoneOverlay);
         _phoneControl.ConfigurePhysicalScreen(settings.AutoTurnOffPhoneScreen);
-        _mediaSession.ConfigureAutoStart(settings.AutoOpenPhoneOverlay && _settingsApplication.AutomaticVideoAllowed, BuildVideoOptions(settings));
+        _mediaSession.ConfigureAutoStart((_vrMenu?.OpenRequested ?? settings.AutoOpenPhoneOverlay) && _settingsApplication.AutomaticVideoAllowed, BuildVideoOptions(settings));
     }
 
     private async void OnAutomationSettingChanged(object? sender, EventArgs eventArgs)
@@ -963,7 +969,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
         SettingsApplicationResult result = await _settingsApplication.ApplyAsync(candidate, cancellationToken);
         _operationStatus.Text = result.ScreenRestarted
             ? "画面设置已应用"
-            : result.VideoChanged ? "已保存，下次打开浮窗时生效"
+            : result.VideoChanged ? "画面设置已保存"
             : "设置已应用";
         _pendingSettings = _settings.Snapshot.Value;
         _settingsDirty = false;
@@ -1082,11 +1088,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
             return;
         }
 
-        if (InvokeRequired)
-        {
-            BeginInvoke(() => OnPhoneAudioStateChanged(sender, eventArgs));
-            return;
-        }
+        if (_notifications.Dispatch(nameof(OnPhoneAudioStateChanged), () => OnPhoneAudioStateChanged(sender, eventArgs))) { return; }
 
         SetControlText(_audioStatus, AudioStateName(eventArgs.Snapshot.State));
         SetControlForeColor(
@@ -1109,11 +1111,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
             return;
         }
 
-        if (InvokeRequired)
-        {
-            BeginInvoke(() => OnPhoneControlStateChanged(sender, eventArgs));
-            return;
-        }
+        if (_notifications.Dispatch(nameof(OnPhoneControlStateChanged), () => OnPhoneControlStateChanged(sender, eventArgs))) { return; }
 
         if (eventArgs.Snapshot.ReasonCode == "SCREEN_GUARD_SAVE_FAILED")
         {
@@ -1143,13 +1141,9 @@ internal sealed partial class MainForm : ExitConfirmationForm
             return;
         }
 
-        if (InvokeRequired)
-        {
-            BeginInvoke(() => OnPhoneMediaSessionStateChanged(sender, eventArgs));
-            return;
-        }
+        if (_notifications.Dispatch(nameof(OnPhoneMediaSessionStateChanged), () => OnPhoneMediaSessionStateChanged(sender, eventArgs))) { return; }
 
-        bool minimize = _windowPolicy.Observe(
+        bool minimize = _vrMenu is null && _windowPolicy.Observe(
             eventArgs.Snapshot.State == PhoneMediaSessionState.Running,
             eventArgs.Snapshot.State is PhoneMediaSessionState.Stopped or PhoneMediaSessionState.Faulted or PhoneMediaSessionState.WaitingForDevice,
             _settings.Snapshot.Value.MinimizeAfterOverlayOpened);
@@ -1180,16 +1174,11 @@ internal sealed partial class MainForm : ExitConfirmationForm
         object? sender,
         OpenVrPlayspaceDragChangedEventArgs eventArgs)
     {
+        if (_notifications.Dispatch(nameof(OnPlayspaceDragStateChanged), () => OnPlayspaceDragStateChanged(sender, eventArgs))) { return; }
         try
         {
             if (IsDisposed || Disposing)
             {
-                return;
-            }
-
-            if (InvokeRequired)
-            {
-                BeginInvoke(() => OnPlayspaceDragStateChanged(sender, eventArgs));
                 return;
             }
 
@@ -1248,11 +1237,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
             return;
         }
 
-        if (InvokeRequired)
-        {
-            BeginInvoke(() => OnPhoneOverlayStateChanged(sender, eventArgs));
-            return;
-        }
+        if (_notifications.Dispatch(nameof(OnPhoneOverlayStateChanged), () => OnPhoneOverlayStateChanged(sender, eventArgs))) { return; }
 
         UpdatePhoneOverlayButton();
         UpdateVideoProbeButton();
@@ -1360,11 +1345,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
             return;
         }
 
-        if (InvokeRequired)
-        {
-            BeginInvoke(() => OnSettingsChanged(sender, eventArgs));
-            return;
-        }
+        if (_notifications.Dispatch(nameof(OnSettingsChanged), () => OnSettingsChanged(sender, eventArgs))) { return; }
 
         AppSettings persisted = eventArgs.Snapshot.Value;
         AppSettings previous = _lastPersistedSettings;
@@ -1407,6 +1388,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
             _ = _controllerHandSelector.SelectValue(settings.ControllerHand);
             _ = _bitrateSelector.SelectValue(settings.VideoBitrateMbps);
             _ = _frameRateSelector.SelectValue(settings.VideoMaximumFramesPerSecond);
+            _uploadModeSelector.SelectedIndex = settings.VideoUploadMode switch { "staging" => 1, "direct" => 2, _ => 0 };
             _ = _updateChannelSelector.SelectValue(settings.UpdateChannel);
             _keepAwakeWhileGrabbedToggle.Checked = settings.KeepAwakeWhileGrabbed;
             _keepAwakeWhileGrabbedToggle.Text = settings.KeepAwakeWhileGrabbed
@@ -1495,6 +1477,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
         pending.VideoResolutionPercent != persisted.VideoResolutionPercent ||
         pending.VideoBitrateMbps != persisted.VideoBitrateMbps ||
         pending.VideoMaximumFramesPerSecond != persisted.VideoMaximumFramesPerSecond ||
+        pending.VideoUploadMode != persisted.VideoUploadMode ||
         pending.UpdateChannel != persisted.UpdateChannel;
 
     private static void SetControlText(Control control, string text)
@@ -1647,6 +1630,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
         _motionView.Gravity.Enabled = enabled;
         _motionView.Friction.Enabled = enabled;
         _motionView.ResetMode.Enabled = enabled;
+        _settingsView.ButtonResetDisabledToggle.Enabled = enabled;
         _settingsView.AutoOpenToggle.Enabled = enabled;
         _settingsView.ScreenOffToggle.Enabled = enabled;
         _settingsView.MinimizeToggle.Enabled = enabled;
@@ -1661,6 +1645,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
             height);
         _bitrateSelector.Enabled = enabled;
         _frameRateSelector.Enabled = enabled;
+        _uploadModeSelector.Enabled = enabled;
         _updateChannelSelector.Enabled = false;
         UpdateDiagnosticUploadButton();
         UpdateSettingsActionButtons();
@@ -1673,6 +1658,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
         _motionView.Gravity.Enabled = enabled;
         _motionView.Friction.Enabled = enabled;
         _motionView.ResetMode.Enabled = enabled;
+        _settingsView.ButtonResetDisabledToggle.Enabled = enabled;
         _settingsView.AutoOpenToggle.Enabled = enabled;
         _settingsView.ScreenOffToggle.Enabled = enabled;
         _settingsView.MinimizeToggle.Enabled = enabled;
@@ -1715,7 +1701,9 @@ internal sealed partial class MainForm : ExitConfirmationForm
         _motionView.ParametersChanged -= OnMotionParametersChanged;
         _motionWriter.Saved -= OnMotionSaved;
         _playspaceDrag.StateChanged -= OnPlayspaceDragStateChanged;
+        if (_vrMenu is not null) { _vrMenu.StateChanged -= OnVrMenuStateChanged; }
         _settings.Changed -= OnSettingsChanged;
+        if (_startupService is not null) { _startupService.StateChanged -= OnSteamVrStartupStateChanged; }
         _settingsApplication.VideoRecoveryChanged -= OnVideoRecoveryChanged;
         Shown -= OnVideoRecoveryChanged;
         _deviceList.MouseClick -= OnDeviceSelected;
@@ -1738,9 +1726,11 @@ internal sealed partial class MainForm : ExitConfirmationForm
         _steamVrBindingNotice.ReloadRequested -= OnReloadLocalBindingRequested;
         _controllerHandSelector.SelectedValueChanged -= OnControllerHandChanged;
         _playspaceDragToggle.CheckedChanged -= OnPlayspaceDragChanged;
+        _settingsView.ButtonResetDisabledToggle.CheckedChanged -= OnMotionParametersChanged;
         _resolutionSelector.SelectedValueChanged -= OnSettingChoiceChanged;
         _bitrateSelector.SelectedValueChanged -= OnSettingChoiceChanged;
         _frameRateSelector.SelectedValueChanged -= OnSettingChoiceChanged;
+        _uploadModeSelector.SelectedValueChanged -= OnSettingChoiceChanged;
         _updateChannelSelector.SelectedValueChanged -= OnSettingChoiceChanged;
         _applySettingsButton.Click -= OnApplySettingsClicked;
         _discardSettingsButton.Click -= OnDiscardSettingsClicked;
@@ -1770,6 +1760,16 @@ internal sealed partial class MainForm : ExitConfirmationForm
 
     private void UpdatePhoneOverlayButton()
     {
+        if (_vrMenu is not null)
+        {
+            bool opened = _vrMenu.OpenRequested;
+            PhoneOverlayButtonPolicy.ApplyVrMenu(_phoneOverlayButton, opened, _vrMenu.RuntimeReady, _operationInProgress);
+            _steamVrBindingsButton.Enabled = !_operationInProgress;
+            _playspaceDragToggle.Enabled = !_operationInProgress;
+            _deviceList.Enabled = CanSelectPhoneDevice && _deviceList.Items.Count > 0;
+            _historyDeviceList.Enabled = CanSelectPhoneDevice && _historyDeviceList.Items.Count > 0;
+            return;
+        }
         _deviceList.Enabled = CanSelectPhoneDevice && _deviceList.Items.Count > 0;
         _historyDeviceList.Enabled = CanSelectPhoneDevice && _historyDeviceList.Items.Count > 0;
         PhoneOverlayState state = _phoneOverlay.Snapshot.State;
@@ -1890,10 +1890,11 @@ internal sealed partial class MainForm : ExitConfirmationForm
                     ? UiPalette.Danger
                     : UiPalette.TextSecondary);
 
-        string steamVrState = SteamVrStatusPresentation.Text(snapshot, _playspaceDrag.Snapshot.State, _startupSteamVrWarning);
+        string steamVrState = SteamVrStatusPresentation.Text(snapshot, _playspaceDrag.Snapshot.State, _startupSteamVrWarning,
+            _startupService?.Snapshot is { Attempts: 0, Pending: true });
         SetControlText(_steamVrStatus, steamVrState);
         SetControlForeColor(_steamVrStatus, steamVrState is "已就绪" or "已连接"
-            ? UiPalette.Success : steamVrState is "连接异常" or "连接超时" ? UiPalette.Danger : UiPalette.TextSecondary);
+            ? UiPalette.Success : steamVrState is "连接异常" or "连接超时" or "组件异常" or "登记异常" ? UiPalette.Danger : UiPalette.TextSecondary);
 
         SetControlText(
             _metricResolution,
@@ -1912,7 +1913,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
                 : "--");
         SetControlText(
             _metricLatency,
-            snapshot.AverageLatencyMilliseconds > 0
+            snapshot.HasLatencySamples
                 ? $"{snapshot.AverageLatencyMilliseconds:F0} ms"
                 : "--");
     }
@@ -1988,7 +1989,7 @@ internal sealed partial class MainForm : ExitConfirmationForm
         if (_startupSteamVrWarning is { } warning)
         {
             _bindingGuideView.BindingNotice.UpdateConnectionNotice(
-                UserFacingErrorMessages.FromReason(warning.ReasonCode, warning.Message));
+                UserFacingErrorMessages.FromReason(warning.ReasonCode, warning.Message), warning.ReasonCode);
             return;
         }
         _bindingGuideView.UpdateBindingNotice(

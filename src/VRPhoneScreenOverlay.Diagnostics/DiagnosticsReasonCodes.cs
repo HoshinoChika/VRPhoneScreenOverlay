@@ -20,6 +20,7 @@ public static class DiagnosticsReasonCodes
 
     /// <summary><c>DIAGNOSTICS_UPLOAD_POLICY_INVALID</c></summary>
     public const string UploadPolicyInvalid = "DIAGNOSTICS_UPLOAD_POLICY_INVALID";
+    public const string UploadPolicyExpired = "DIAGNOSTICS_UPLOAD_POLICY_EXPIRED";
 
     /// <summary><c>DIAGNOSTICS_UPLOADED</c></summary>
     public const string Uploaded = "DIAGNOSTICS_UPLOADED";

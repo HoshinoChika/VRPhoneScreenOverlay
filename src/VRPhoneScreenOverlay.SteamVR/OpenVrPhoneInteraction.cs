@@ -61,6 +61,7 @@ public sealed record OpenVrBindingResult(
 
 internal sealed class OpenVrPhoneInteraction : IDisposable
 {
+    private readonly Func<OpenVrPhonePlaceholderState>? _phoneState;
     private const string _leftSpaceDragPath = "/actions/main/in/LeftHandSpaceDrag";
     private const string _rightSpaceDragPath = "/actions/main/in/RightHandSpaceDrag";
     private const string _resetOffsetsPath = "/actions/main/in/ResetOffsets";
@@ -182,6 +183,29 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
         _screenGuardState = (enabled ? 1 : 0) | (faulted ? 2 : 0);
     }
     private volatile bool _frameReady;
+    private bool _standaloneMenu;
+
+    // Called under ApiGate, like video submission. The menu has useful geometry
+    // before a video frame arrives; video readiness only authorizes phone input.
+    public void EnableStandaloneMenu()
+    {
+        _standaloneMenu = true;
+        _presentationStopped = false;
+    }
+
+    public void DisconnectVideo()
+    {
+        _frameReady = false;
+        _phonePresented = false;
+        _phoneLockState = 0;
+        _screenGuardState = 0;
+        _menu.ResetInput();
+        _phoneActionsEnabled = false;
+        _phoneActionSetGate.Reset();
+        _touchState.RequireGeometryRelease(out _);
+        CancelSmoothScroll();
+        _previousBack = _previousHome = _previousRecents = _previousControlPanel = _previousScreenshot = false;
+    }
     private string? _headsetModel;
     private string? _controllerType;
     private uint _controllerDeviceIndex = OpenVR.k_unTrackedDeviceIndexInvalid;
@@ -202,9 +226,13 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
         CVROverlay overlay,
         ulong overlayHandle,
         float initialDistanceMeters,
-        Action submitVideoTexture, OpenVrVideoSettingsChannel? videoSettings = null)
+        Action submitVideoTexture, OpenVrVideoSettingsChannel? videoSettings = null, OpenVrTranslationChannel? translation = null,
+        OpenVrClipboardChannel? clipboard = null, Func<OpenVrPhonePlaceholderState>? phoneState = null)
     {
+        _phoneState = phoneState;
         _menu.VideoSettings = videoSettings;
+        _menu.Translation = translation;
+        _menu.Clipboard = clipboard;
         _openVrGate = openVrGate;
         _system = system;
         _overlay = overlay;
@@ -407,18 +435,21 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
 
     private void UpdatePresentationEnvironment()
     {
+        _menu.DisconnectedPlaceholder = _standaloneMenu && !_frameReady;
+        if (_menu.DisconnectedPlaceholder) { _menu.PlaceholderState = _phoneState?.Invoke() ?? OpenVrPhonePlaceholderState.Disconnected; }
         bool headValid = _trackedPoses[OpenVR.k_unTrackedDeviceIndex_Hmd].bPoseIsValid;
-        _menu.SetEnvironment(_frameReady && _worldAnchored && headValid && !_presentationStopped,
-            _overlay.IsDashboardVisible(), _unlockKeypadEnabled);
+        _menu.SetEnvironment((_standaloneMenu || _frameReady) && _worldAnchored && headValid && !_presentationStopped,
+            _overlay.IsDashboardVisible(), _unlockKeypadEnabled && _frameReady);
         _menu.SetLocked(_phoneLockState switch { 2 => true, 1 => false, _ => null });
     }
 
     private void SynchronizePhoneVisibility()
     {
-        if (_phonePresented == _menu.PhoneVisible) { return; }
-        Check(_menu.PhoneVisible ? _overlay.ShowOverlay(_overlayHandle) : _overlay.HideOverlay(_overlayHandle),
+        bool videoVisible = _frameReady && _menu.PhoneVisible;
+        if (_phonePresented == videoVisible) { return; }
+        Check(videoVisible ? _overlay.ShowOverlay(_overlayHandle) : _overlay.HideOverlay(_overlayHandle),
             "同步手机浮窗显示状态");
-        _phonePresented = _menu.PhoneVisible;
+        _phonePresented = videoVisible;
         if (_phonePresented) { _submitVideoTexture(); }
     }
 
@@ -426,7 +457,7 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
     {
         UpdatePresentationEnvironment();
         _menu.SynchronizeSettings(playspace);
-        if (_menu.PhoneVisible && (recall || !_phonePresented))
+        if (_menu.PhoneVisible && (recall || (!_standaloneMenu && !_phonePresented)))
         {
             // Re-entry includes manual show, dashboard return and tracking
             // recovery. Scale survives, but position always uses the current head.
@@ -917,11 +948,16 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
             OpenVrMenuChange menuChange = beginGroupGrab ? default : _menu.ProcessInput(
                 !_recallLifetime.Finishing && validRayPose && !_grabbed && (!geometricMenuHit || pointerVisible),
                 visibleMenuHit, visibleMenuHit ? menuHit.Target : OpenVrMenuTarget.None,
-                menuHit.SliderFraction, menuPressed, sharedInput);
+                menuHit.SliderFraction, menuPressed, sharedInput, translationHit: menuHit.TranslationHit, clipboardHit: menuHit.ClipboardHit, panelY: (1 - menuHit.Intersection.vUVs.v1) * OpenVrTranslationChannel.Height);
+            bool panelStick = _menu.ProcessPanelStick(
+                visibleMenuHit && validRayPose && !_recallLifetime.Finishing && !_grabbed && !grab && !menuPressed && scale.bActive,
+                menuHit.Target, scale.y, Environment.TickCount64);
+            if (panelStick) { hovered = false; }
             if (menuChange.Playspace is { } request)
             {
                 OpenVrRuntimeHost.ActionUpdates.RequestControls(request.Enabled, request.Multiplier, request.FlingEnabled, request.MotionOptions);
             }
+            if (menuChange.PlayspaceResetRequested) { OpenVrRuntimeHost.ActionUpdates.RequestReset(); }
             if (menuChange.PhoneCommand is { } phoneCommand) { commands[commandCount++] = phoneCommand; }
             if (menuChange.OpacityChanged)
             {
@@ -1575,6 +1611,7 @@ internal sealed class OpenVrPhoneInteraction : IDisposable
 
     private void EmitPhoneInput(OpenVrPhoneInputCommand command)
     {
+        if (!_frameReady) { return; }
         if (command.ScreenWidth < 1 || command.ScreenHeight < 1)
         { command = command with { ScreenWidth = _touchState.FrameWidth, ScreenHeight = _touchState.FrameHeight }; }
         command = command with { GeometryRevision = command.GeometryRevision ?? _appliedControlGeometryRevision };

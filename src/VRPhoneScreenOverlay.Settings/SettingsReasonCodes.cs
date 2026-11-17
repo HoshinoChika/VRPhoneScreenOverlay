@@ -35,6 +35,8 @@ public static class SettingsReasonCodes
     public const string Saved = "SETTINGS_SAVED";
     public const string FieldsRestored = "SETTINGS_FIELDS_RESTORED";
     public const string VideoSaved = "SETTINGS_VIDEO_SAVED";
+    public const string VideoTransferSaved = "SETTINGS_VIDEO_TRANSFER_SAVED";
+    public const string PhotoSyncSaved = "SETTINGS_PHOTO_SYNC_SAVED";
 
     /// <summary><c>SETTINGS_VALUES_REPAIRED</c></summary>
     public const string ValuesRepaired = "SETTINGS_VALUES_REPAIRED";

@@ -17,37 +17,49 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length >= 1 && args[0] == "--translation-capture")
+        {
+            int range = 65;
+            if (args.Length > 3 || (args.Length == 3 && args[2] != "armed") || (args.Length >= 2 &&
+                (!int.TryParse(args[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out range) || range is < 30 or > 100)))
+            { return 1; }
+            return OpenVrTranslationCapture.RunIsolatedCapture(range, args.Length == 3);
+        }
         using RuntimeIncidentSession incident = RuntimeIncidentSession.StartAsync().AsTask().GetAwaiter().GetResult();
+        using DiagnosticCaptureService capture = new(Path.Combine(AppContext.BaseDirectory, VRPhoneScreenOverlay.Contracts.AppIdentity.MaintenanceExecutableName));
+        capture.ObserveIncident(incident);
         try
         {
+            _ = capture.StartAutomaticAsync(CancellationToken.None).GetAwaiter().GetResult();
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
-            int result = RunApplication(args, incident);
+            int result = RunApplication(args, incident, capture);
             if (result == 0) { incident.CompleteAsync().AsTask().GetAwaiter().GetResult(); }
             return result;
         }
         catch (Exception error)
         {
+            // Keep the external observer attached while the runtime handles the fatal exception.
+            capture.PreserveObserverForFatalExit();
             incident.RecordFailure(error, "application-fatal");
             throw;
         }
     }
 
-    private static int RunApplication(string[] args, RuntimeIncidentSession incident)
+    private static int RunApplication(string[] args, RuntimeIncidentSession incident, DiagnosticCaptureService capture)
     {
         int cleanupFailureCount = 0;
         string? updateHealthFile = ReadArgument(args, "--update-health-file");
         string? updateHealthToken = ReadArgument(args, "--update-health-token");
 
-        ApplicationConfiguration.Initialize();
-
         AppRuntime runtime = new();
         NullSharingSession sharing = new();
         IAndroidConnectionLogSink connectionLog = AndroidConnectionFactory.CreateDefaultLog();
         IAndroidConnectionService phone = AndroidConnectionFactory.CreateDefault(connectionLog);
+        using PhoneClipboardStore phoneClipboard = new();
         IAndroidVideoSessionFactory videoSessions =
             AndroidConnectionFactory.CreateDefaultVideoSessions(phone, connectionLog);
         IAndroidControlSessionFactory controlSessions =
-            AndroidConnectionFactory.CreateDefaultControlSessions(phone, connectionLog);
+            AndroidConnectionFactory.CreateDefaultControlSessions(phone, connectionLog, phoneClipboard);
         IAndroidAudioSessionFactory audioSessions =
             AndroidConnectionFactory.CreateDefaultAudioSessions(phone, connectionLog);
         IAndroidMediaPlaybackControl androidMediaPlayback =
@@ -61,13 +73,18 @@ internal static class Program
                 decoderPreference);
         PhoneControlService phoneControl = new(controlSessions, connectionLog);
         PhoneAudioService phoneAudio = new(audioSessions, connectionLog);
+        JsonAppSettingsService settings = JsonAppSettingsService.CreateDefault();
+        VideoUploadPreferences uploadPreferences = new(settings, Environment.GetEnvironmentVariable("VRPSO_VIDEO_UPLOAD"));
         OpenVrVideoSettingsChannel videoSettings = new();
+        OpenVrTranslationChannel translationChannel = new() { PhoneConnected = () => phone.Snapshot.IsReady };
+        OpenVrClipboardChannel clipboardChannel = new() { PhoneConnected = () => phone.Snapshot.IsReady };
+        using VrMenuOverlayOwner menuOwner = new();
         PhoneOverlayService phoneOverlay = new(
             videoSessions,
             phoneControl,
             AndroidConnectionFactory.CreateDefaultKeyguardStateService(phone),
             connectionLog,
-            new PhoneVideoPipelineFactory(videoSettings, decoderPreference), incident, videoTrials, VideoContext);
+            new PhoneVideoPipelineFactory(videoSettings, decoderPreference, translationChannel, clipboardChannel, menuOwner.AcquireVideo, () => uploadPreferences.Selection), incident, videoTrials, VideoContext, menuOwner);
         OpenVrPlayspaceDragService? playspaceDrag = null;
         PhoneMediaSessionCoordinator mediaSession = new(
             phoneOverlay,
@@ -75,24 +92,34 @@ internal static class Program
             phoneControl,
             androidMediaPlayback,
             phone,
-            () => playspaceDrag?.IsRuntimeReady == true, automaticVideoAllowed: options =>
+            () => playspaceDrag?.IsRuntimeReady == true && menuOwner.IsReady, automaticVideoAllowed: options =>
                 videoTrials.AutomaticAllowed(VideoContext(), new(options.RequestedResolutionPercent ?? options.ResolutionPercent,
                     options.VideoBitrateBitsPerSecond / 1_000_000, options.MaximumFramesPerSecond)));
-        JsonAppSettingsService settings = JsonAppSettingsService.CreateDefault();
+        using PhonePlaceholderStateSource placeholderState = new(phone, mediaSession);
+        using VrMenuService vrMenu = new(menuOwner,
+            () => OpenVrSceneOverlayFactory.Create(videoSettings: videoSettings, translation: translationChannel, clipboard: clipboardChannel,
+                phoneState: () => placeholderState.State),
+            () => playspaceDrag?.IsRuntimeReady == true, connectionLog, OpenVrMenuRuntime.ReadIdentity,
+            async () =>
+            {
+                await mediaSession.StopForConnectionChangeAsync(CancellationToken.None).ConfigureAwait(false);
+                playspaceDrag?.StopService();
+                menuOwner.Detach();
+                OpenVrMenuRuntime.ResetAfterConsumersStopped();
+                playspaceDrag?.Start();
+                mediaSession.RequestAutomaticStart();
+            }, () => mediaSession.StopAsync(CancellationToken.None).AsTask());
         using PicoMicrophoneKeeper picoMicrophone = new();
         settings.Changed += (_, args) => picoMicrophone.Configure(args.Snapshot.Value.PicoMicrophoneKeeperEnabled);
         ClientServiceConfiguration serviceConfiguration = ClientServiceConfiguration.LoadDefault();
         using HttpUpdateService updateService = new(UpdateServiceOptions.FromConfiguration(serviceConfiguration));
         using DiagnosticHealthMonitor diagnosticHealth = new(incident, () => connectionLog.Health,
             () => DiagnosticContextBuilder.ObserveHardware(phone.Snapshot, phoneOverlay.Snapshot, phoneOverlay.DiagnosticSnapshot));
-        TroubleshootingCredential? troubleshootingCredential = TroubleshootingCredential.TryLoadDefaultAsync(CancellationToken.None).GetAwaiter().GetResult();
         using AnonymousDiagnosticsService diagnosticsService = new(
             DiagnosticsServiceOptions.FromConfiguration(serviceConfiguration) with
             {
                 RuntimeHealthProvider = diagnosticHealth.Capture,
-                TroubleshootingCredential = troubleshootingCredential,
-                InvestigationDirectory = troubleshootingCredential is null ? null : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "VRPhoneScreenOverlay", "troubleshooting", troubleshootingCredential.StorageId, "investigations")
+                CaptureCoverageProvider = capture.ReadCoverage
             });
         EventHandler<OpenVrPlayspaceDragDiagnosticEventArgs> playspaceDiagnosticHandler =
             (_, eventArgs) =>
@@ -104,6 +131,27 @@ internal static class Program
                     diagnostic.ReasonCode,
                     diagnostic.Message));
             };
+        using RuntimeFlightRecorder flight = new(incident, () =>
+        {
+            AndroidConnectionSnapshot connection = phone.Snapshot;
+            PhoneOverlaySnapshot video = phoneOverlay.DiagnosticSnapshot;
+            PhoneAudioSnapshot audio = phoneAudio.Snapshot;
+            PhoneControlSnapshot input = phoneControl.Snapshot;
+            OpenVrPlayspaceDragSnapshot? space = playspaceDrag?.Snapshot;
+            return
+            [
+                new(FlightComponent.Connection, connection.State.ToString(), connection.ReasonCode, connection.Devices.Count),
+                new(FlightComponent.Video, video.State.ToString(), video.ReasonCode, video.SubmittedFrames,
+                    video.DroppedFrames, video.AverageLatencyMilliseconds, video.TotalEncodedBytes, video.PipelineStage) { DelaySampleCount = video.LatencySampleCount },
+                new(FlightComponent.Audio, audio.State.ToString(), audio.ReasonCode, audio.DecodedPackets,
+                    audio.DroppedBuffers, audio.BufferedDuration.TotalMilliseconds),
+                new(FlightComponent.Input, input.State.ToString(), input.ReasonCode, input.SentCommands,
+                    input.ReplacedPointerMoves, input.LastQueueDelayMilliseconds),
+                new(FlightComponent.SteamVr, video.BindingState.ToString(), video.BindingReasonCode),
+                new(FlightComponent.Playspace, space?.State.ToString() ?? "Unknown", space?.ReasonCode ?? "UNKNOWN")
+            ];
+        });
+        capture.SetSerializedFlightProvider(() => flight.LatestSerialized);
         using UsageHeartbeatClient heartbeat = UsageHeartbeatClient.CreateDefault(serviceConfiguration);
         PhoneBindingSynchronizationService bindingSynchronization = new(() =>
             playspaceDrag?.IsRuntimeReady == true || phoneOverlay.Snapshot.SteamVrInputReady,
@@ -123,7 +171,7 @@ internal static class Program
                 StartupAttempt = status.Attempts,
                 StartupPending = status.Pending,
                 ManifestLaunchObserved = status.ManifestLaunchObserved
-            }));
+            }), afterFirstAttempt: () => { playspaceDrag?.Start(); vrMenu.Start(); });
         try
         {
             settings.InitializeAsync(CancellationToken.None).AsTask().GetAwaiter().GetResult();
@@ -146,9 +194,7 @@ internal static class Program
                     "update_bindings", "UPDATE_BINDING_DEFAULTS_WRITTEN", "更新已写入本版本默认绑定，等待启动健康确认"));
             }
             picoMicrophone.Configure(initialSettings.PicoMicrophoneKeeperEnabled);
-            startupService.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
-            OpenVrBindingResult startupRegistration = startupService.Snapshot.Registration;
-            OpenVrBindingResult startupBinding = OpenVrBindingRecovery.PrepareLocalBinding();
+            OpenVrBindingResult startupBinding = OpenVrBindingRecovery.PrepareLocalFiles();
             connectionLog.TryWrite(new AndroidConnectionLogEntry(
                 DateTimeOffset.UtcNow,
                 "steamvr_binding_startup",
@@ -158,21 +204,9 @@ internal static class Program
                 MapControllerHand(initialSettings.ControllerHand),
                 1f);
             playspaceDrag.DiagnosticRecorded += playspaceDiagnosticHandler;
-            playspaceDrag.Start();
             runtime.StartAsync(CancellationToken.None).AsTask().GetAwaiter().GetResult();
             phone.StartAsync(CancellationToken.None).AsTask().GetAwaiter().GetResult();
             SettingsApplicationService settingsApplication = new(settings, phoneOverlay, mediaSession, playspaceDrag, phone, videoTrials, VideoContext);
-            using TroubleshootingClient? troubleshootingClient = troubleshootingCredential is not null && serviceConfiguration.DiagnosticsInitUri is { } diagnosticsUri
-                ? new(diagnosticsUri, troubleshootingCredential) : null;
-            using TroubleshootingWorkflow? troubleshooting = troubleshootingClient is not null
-                ? new(troubleshootingClient, new TemporaryRepairExecutor(phone, phoneOverlay, mediaSession, settings, settingsApplication),
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRPhoneScreenOverlay", "troubleshooting", troubleshootingCredential!.StorageId, "outbox"),
-                    new LocalTroubleshootingInspector(phone, phoneOverlay, phoneAudio, phoneControl, mediaSession,
-                        new LocalSoftwareFileInspector(AppContext.BaseDirectory,
-                            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRPhoneScreenOverlay"),
-                            System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(Program).Assembly)?.InformationalVersion ?? string.Empty), () => connectionLog.Health,
-                        playspaceDrag, settings, new LocalDiagnosticReadTools(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRPhoneScreenOverlay", "logs"))))
-                : null;
             using ScreenGuardSettingsController screenGuardSettings = new(settings, phoneControl);
             using VrVideoSettingsController vrVideoSettings = new(videoSettings, settingsApplication, settings, phone);
             using MainForm mainForm = new(
@@ -196,43 +230,111 @@ internal static class Program
                     PicoMicrophoneState.Starting => "连接中",
                     PicoMicrophoneState.Draining => "运行中",
                     _ => "重连中",
-                }, settingsApplication, bindingSynchronization, startupRegistration.Succeeded ? startupBinding : startupRegistration,
-                ReadArgument(args, "--update-adb-blocked"), startupService, troubleshooting);
-            UpdateHealthReporter.ReportHealthy(
-                updateHealthFile,
-                updateHealthToken,
-                Application.ProductVersion.Split('+', 2)[0]);
-            if (updateBindings is not null)
-            {
-                updateBindings.Commit();
-                updateBindings.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                updateBindings = null;
-                connectionLog.TryWrite(new AndroidConnectionLogEntry(DateTimeOffset.UtcNow,
-                    "update_bindings", "UPDATE_BINDING_DEFAULTS_COMMITTED", "更新默认绑定覆盖已完成；实际生效状态由 SteamVR 绑定诊断确认"));
-            }
+                }, settingsApplication, bindingSynchronization, startupBinding,
+                ReadArgument(args, "--update-adb-blocked"), startupService, capture, vrMenu, incident.ArmShutdownAsync);
+            mainForm.ConfigureVideoUpload(uploadPreferences);
             heartbeat.Start();
             bindingSynchronization.Start();
-            startupService.Start();
-            Application.Run(mainForm);
-            mainForm.CompleteMotionSavesAsync().GetAwaiter().GetResult();
+            mainForm.Shown += (_, _) => startupService.Start();
+            var panels = new ApplicationLifetime(incident);
+            try
+            {
+#pragma warning disable CA2000 // Ownership transfers immediately to panels; its finally drains every registered resource, including partial startup.
+                string translationDirectory = Path.Combine(AppContext.BaseDirectory, "data", "translation-history");
+                TranslationConfigurationStore translationConfiguration = new(Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRPhoneScreenOverlay", "translation"));
+                panels.Register("translation-configuration", () => { translationConfiguration.Dispose(); return ValueTask.CompletedTask; });
+                try { translationConfiguration.LoadAsync(CancellationToken.None).GetAwaiter().GetResult(); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException or System.Text.Json.JsonException) { }
+                DeepSeekTranslationService translationService = new(incident);
+                ServiceConnectionProbe serverProbe = new(serviceConfiguration);
+                panels.Register("server-connection-probe", () => { serverProbe.Dispose(); return ValueTask.CompletedTask; });
+                mainForm.ConfigureServerCheck(serverProbe.CheckAsync);
+                panels.Register("translation-service", () => { translationService.Dispose(); return ValueTask.CompletedTask; });
+                mainForm.ConfigureTranslation(translationConfiguration, async (key, token) =>
+                {
+                    var probe = TranslationProbeImage.Create();
+                    try
+                    {
+                        await translationService.ValidateAsync(key, probe, token);
+                    }
+                    finally { Array.Clear(probe.Bytes); }
+                });
+                TranslationHistoryStore translationHistory = new(translationDirectory);
+                TranslationWorkflow translationWorkflow = new(new OneShotTranslationFrameSource(new ProcessTranslationFrameSource(Environment.ProcessPath!, () => translationConfiguration.Preferences.CaptureRangePercent),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRPhoneScreenOverlay", "translation")),
+                    new SelectedTranslationClient(() => translationConfiguration.Preferences.ApiSource,
+                        translationService.CreateBuiltInClient(serviceConfiguration),
+                        translationService.CreateClient(() => translationConfiguration.Key, translationConfiguration.ReportKeyHealth)), translationHistory);
+                TranslationShutterSound shutter = new();
+                panels.Register("translation-sound", shutter.DisposeAsync);
+                TranslationPanelController translationController = new(translationChannel, translationWorkflow,
+                    translationHistory, translationConfiguration, shutter.Play, incident, shutter.PlayCountdown);
+                panels.Register("translation-panel", translationController.DisposeAsync);
+                PhoneScreenshotController screenshotController = new(translationChannel.Screenshot, phone,
+                    new ProcessTranslationFrameSource(Environment.ProcessPath!, () => translationConfiguration.Preferences.CaptureRangePercent), new AndroidImageTransfer(phone),
+                    () => { if (translationConfiguration.Preferences.ShutterSound) { shutter.Play(); } },
+                    () => { if (translationConfiguration.Preferences.ShutterSound) { shutter.PlayCountdown(); } });
+                panels.Register("phone-screenshot", screenshotController.DisposeAsync);
+                AndroidImageTransfer photoTransfer = new(phone);
+                VrcPhotoSyncService photoSync = new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "VRChat"),
+                    (path, token) => phone.Snapshot.IsReady && phone.Snapshot.SelectedDevice is { } device
+                        ? photoTransfer.SendPhotoAsync(device.DeviceKey, path, token)
+                        : Task.FromException(new InvalidOperationException("PHOTO_PHONE_UNAVAILABLE")));
+                panels.Register("photo-sync", photoSync.DisposeAsync);
+                PhotoSyncPreferences photoPreferences = new(settings, photoSync);
+                photoPreferences.RestoreAsync(CancellationToken.None).GetAwaiter().GetResult();
+                mainForm.ConfigurePhotoSync(photoPreferences);
+                VideoLinkResolver videoResolver = new();
+                panels.Register("video-resolver", () => { videoResolver.Dispose(); return ValueTask.CompletedTask; });
+                ClipboardConfigurationStore clipboardConfiguration = new(Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRPhoneScreenOverlay", "clipboard-settings.json"));
+                try { clipboardConfiguration.LoadAsync(CancellationToken.None).GetAwaiter().GetResult(); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { }
+                mainForm.ConfigureClipboard(clipboardConfiguration);
+                ClipboardPanelController clipboardController = new(clipboardChannel, phoneClipboard, videoResolver, mainForm.CopyPhoneClipboardAsync, incident, clipboardConfiguration, mainForm.CopyPhoneClipboardGuardedAsync);
+                panels.Register("clipboard-panel", clipboardController.DisposeAsync);
+                panels.ConfirmWhenShown(mainForm, () =>
+                {
+                    UpdateHealthReporter.ReportHealthy(
+                        updateHealthFile,
+                        updateHealthToken,
+                        Application.ProductVersion.Split('+', 2)[0]);
+                    if (updateBindings is not null)
+                    {
+                        updateBindings.Commit();
+                        updateBindings.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                        updateBindings = null;
+                        connectionLog.TryWrite(new AndroidConnectionLogEntry(DateTimeOffset.UtcNow,
+                            "update_bindings", "UPDATE_BINDING_DEFAULTS_COMMITTED", "更新默认绑定覆盖已完成；实际生效状态由 SteamVR 绑定诊断确认"));
+                    }
+                });
+                Application.Run(mainForm);
+                // Ordinary confirmed exit already armed this before preparation.
+                // Successful update handoff arms here, before native cleanup.
+                incident.ArmShutdownAsync().GetAwaiter().GetResult();
+#pragma warning restore CA2000
+            }
+            finally
+            {
+                panels.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                cleanupFailureCount += panels.Failures.Count;
+                mainForm.CompleteMotionSavesAsync().GetAwaiter().GetResult();
+            }
         }
         finally
         {
             List<string> cleanupFailures = [];
-            if (updateBindings is not null)
-            {
-                try { updateBindings.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
-                catch (Exception) { cleanupFailures.Add("update-bindings"); }
-            }
-            try { heartbeat.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
-            catch (Exception) { cleanupFailures.Add("heartbeat"); }
             cleanupFailures.AddRange(ShutdownSequence.RunAsync(
             [
+                new("update-bindings", () => updateBindings?.DisposeAsync() ?? ValueTask.CompletedTask),
+                new("heartbeat", heartbeat.DisposeAsync),
                 new("steamvr-startup", startupService.DisposeAsync),
                 new("binding-synchronization", bindingSynchronization.DisposeAsync),
                 new("settings", settings.DisposeAsync),
                 new("sharing-stop", () => sharing.StopAsync(CancellationToken.None)),
                 new("sharing-dispose", sharing.DisposeAsync),
+                new("vr-menu-worker", vrMenu.StopAsync),
                 new("media-session", mediaSession.DisposeAsync),
                 new("phone-audio", phoneAudio.DisposeAsync),
                 new("playspace", () =>
@@ -245,6 +347,7 @@ internal static class Program
                     return ValueTask.CompletedTask;
                 }),
                 new("phone-overlay", phoneOverlay.DisposeAsync),
+                new("vr-menu", vrMenu.DisposeAsync),
                 new("phone-control", phoneControl.DisposeAsync),
                 new("phone-connection", phone.DisposeAsync),
                 new("runtime-stop", () => runtime.StopAsync(CancellationToken.None)),
@@ -252,12 +355,12 @@ internal static class Program
             ], incident).GetAwaiter().GetResult());
             foreach (string component in cleanupFailures)
             {
-                incident.CheckpointAsync(new("cleanup", "failed", component), CancellationToken.None).AsTask().GetAwaiter().GetResult();
+                // Failure evidence was already attempted by the bounded shutdown recorder.
                 connectionLog.TryWrite(new AndroidConnectionLogEntry(DateTimeOffset.UtcNow,
                     "shutdown", "APP_CLEANUP_FAILED", "组件释放未完成：" + component));
             }
             connectionLog.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            cleanupFailureCount = cleanupFailures.Count;
+            cleanupFailureCount += cleanupFailures.Count;
         }
 
         return cleanupFailureCount == 0 ? 0 : 1;

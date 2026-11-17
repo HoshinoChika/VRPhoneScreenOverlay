@@ -11,7 +11,7 @@
   "binding": {
     "path": "../../OpenVR/openvr_api.cs",
     "upstreamSha256": "157a59651bb0b0c48f8ff7ceb0089a06f53264de240cb202a1c5430721b505ad",
-    "packagedSha256": "2240ae628c9d6b5eb7e2245e9c53a34583a27a410635c47212523f10c261c099",
-    "localChange": "Nullable analysis disabled for generated binding only."
+    "packagedSha256": "3b0ea0a409c69da2e4abd28303971ed5ef546758f7a4f5ac2f13cbe50b55286e",
+    "localChange": "Nullable analysis disabled for generated binding; explicit bounded UTF-8 output decoding for application properties, tracked-device strings and resource paths. Native ABI buffer pointers preserved."
   }
 }

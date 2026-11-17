@@ -10,6 +10,7 @@ public static class OpenVrBindingSettingsCleaner
 
     private static OpenVrBindingResult Prepare(OpenVrControllerHand? preparedHand, bool clearSelection)
     {
+        if (!OpenVrRuntimeAvailability.CanInitializeUtility()) { return OpenVrRuntimeAvailability.NamespaceUnavailable(); }
         bool initialized = false;
         try
         {

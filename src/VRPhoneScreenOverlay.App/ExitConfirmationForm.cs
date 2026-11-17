@@ -2,8 +2,9 @@ namespace VRPhoneScreenOverlay.App;
 
 // User close requests may offer minimize. A successfully handed-off update has
 // already been approved and must allow the maintenance process to observe exit.
-internal abstract class ExitConfirmationForm : Form
+internal abstract class ExitConfirmationForm(Func<Task>? armExitDeadline = null) : Form
 {
+    protected bool ExitCommitted { get; private set; }
     private bool _exitConfirmed;
     private bool _preparingExit;
     private IWindowTray? _tray;
@@ -78,6 +79,7 @@ internal abstract class ExitConfirmationForm : Form
         if (!_exitConfirmed)
         {
             e.Cancel = true;
+            if (ExitCommitted) { return; }
             if (e.CloseReason == CloseReason.UserClosing) { ShowExitConfirmation(); }
             else { BeginInvoke(ConfirmExit); } // Keep the message loop alive while operations finish.
         }
@@ -85,13 +87,17 @@ internal abstract class ExitConfirmationForm : Form
     }
 
     protected virtual Task PrepareExitAsync() => Task.CompletedTask;
+    protected virtual void OnExitCommitted() { }
     protected virtual void OnExitPreparationFailed() { }
     protected async void ConfirmExit()
     {
-        if (_preparingExit || IsDisposed || Disposing) { return; }
+        if (_preparingExit || ExitCommitted || IsDisposed || Disposing) { return; }
         _preparingExit = true;
+        ExitCommitted = true;
         try
         {
+            OnExitCommitted();
+            if (armExitDeadline is not null) { await armExitDeadline().ConfigureAwait(true); }
             await PrepareExitAsync().ConfigureAwait(true);
             if (IsDisposed || Disposing) { return; }
             _exitConfirmed = true;

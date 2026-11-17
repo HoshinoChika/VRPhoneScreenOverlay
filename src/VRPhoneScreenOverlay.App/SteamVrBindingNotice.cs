@@ -66,10 +66,10 @@ public sealed class SteamVrBindingNotice : Panel
         string message)
         => PresentNotice(state, showNotice, message, connectionIssue: false);
 
-    internal void UpdateConnectionNotice(string message)
-        => PresentNotice(OpenVrBindingHealthState.Failed, true, message, connectionIssue: true);
+    internal void UpdateConnectionNotice(string message, string? reasonCode = null)
+        => PresentNotice(OpenVrBindingHealthState.Failed, true, message, connectionIssue: true, reasonCode);
 
-    private void PresentNotice(OpenVrBindingHealthState state, bool showNotice, string message, bool connectionIssue)
+    private void PresentNotice(OpenVrBindingHealthState state, bool showNotice, string message, bool connectionIssue, string? reasonCode = null)
     {
         bool visibleNotice = showNotice &&
             state is OpenVrBindingHealthState.Loading or OpenVrBindingHealthState.Failed;
@@ -91,7 +91,9 @@ public sealed class SteamVrBindingNotice : Panel
             failed ? UiPalette.Danger : UiPalette.TextPrimary);
         SetControlText(
             _title,
-            connectionIssue ? "SteamVR 连接异常" : failed ? "SteamVR 手柄绑定加载失败" : "正在加载 SteamVR 手柄绑定…");
+            reasonCode is OpenVrReasonCodes.StartupRegistrationFailed or OpenVrReasonCodes.StartupRegistrationUnconfirmed ? "SteamVR 启动登记异常" :
+            connectionIssue ? message.StartsWith("软件绑定辅助组件", StringComparison.Ordinal) ? "软件组件异常" : "SteamVR 连接异常"
+                : failed ? "SteamVR 手柄绑定加载失败" : "正在加载 SteamVR 手柄绑定…");
         SetControlText(
             _message,
             failed && !connectionIssue

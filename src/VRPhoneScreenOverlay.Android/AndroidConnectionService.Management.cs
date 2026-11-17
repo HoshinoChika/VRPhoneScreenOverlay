@@ -5,7 +5,7 @@ internal sealed partial class AndroidConnectionService
     private readonly ConnectionPreferencesStore _connectionPreferences;
     private string? _manualDeviceKey;
     private bool _automaticSelectionSuppressed;
-    private long _nextManagedReconnect;
+    private readonly ManagedWirelessRetry _managedReconnectRetry = new();
     private int _managedReconnectIndex;
     private readonly Func<CancellationToken, ValueTask<IAdbCommandRunner>> _managedRunnerFactory;
     private IAdbCommandRunner? _managedRunner;
@@ -260,7 +260,7 @@ internal sealed partial class AndroidConnectionService
             .Where(saved => saved.AutoConnect && eligibleRoutes.Contains(saved.DeviceKey)).Select(ConnectionPreferencesStore.Scope));
     }
 
-    // Discovery owns one retry every ten seconds, with no queued attempts.
+    // Discovery owns one retry at a time, with 10s minimum spacing and bounded failure backoff.
     // Only explicitly enabled, previously successful endpoints/services are retried.
     private async ValueTask<bool> TryManagedReconnectAsync(AdbListResult list, CancellationToken cancellationToken)
     {
@@ -268,24 +268,45 @@ internal sealed partial class AndroidConnectionService
         if (_automaticSelectionSuppressed || preferences.Method == PhoneConnectionMethod.Usb ||
             list.Devices.Any(device => device.Status == AndroidDeviceStatus.Ready &&
                 (device.DeviceKey == _manualDeviceKey || device.DeviceKey == _activeDeviceKey)) ||
-            ConnectionPreferencesStore.SelectAutomatic(list.Devices, preferences) is not null) { return false; }
+            ConnectionPreferencesStore.SelectAutomatic(list.Devices, preferences) is not null)
+        { _managedReconnectRetry.Reset(); return false; }
         SavedAndroidConnection[] candidates = preferences.Devices.Where(device => device.AutoConnect && device.LastConnectedAt is not null &&
             device.Transport == AndroidTransport.Network).OrderByDescending(device => device.LastConnectedAt).ToArray();
-        if (candidates.Length == 0 || Environment.TickCount64 < _nextManagedReconnect) { return false; }
-        _nextManagedReconnect = Environment.TickCount64 + 10000;
-        SavedAndroidConnection candidate = candidates[_managedReconnectIndex % candidates.Length];
-        _managedReconnectIndex = (_managedReconnectIndex + 1) % candidates.Length;
+        if (candidates.Length == 0) { return false; }
+        SavedAndroidConnection? candidate = null;
+        long now = Environment.TickCount64;
+        for (int offset = 0; offset < candidates.Length; offset++)
+        {
+            int index = (_managedReconnectIndex + offset) % candidates.Length;
+            if (!_managedReconnectRetry.TryBegin(candidates[index].DeviceKey, now)) { continue; }
+            candidate = candidates[index];
+            _managedReconnectIndex = (index + 1) % candidates.Length;
+            break;
+        }
+        if (candidate is null) { return false; }
+        bool connected = false;
         try
         {
             IAdbCommandRunner runner = _managedRunner ??= await _managedRunnerFactory(cancellationToken).ConfigureAwait(false);
             AdbCommandResult mdns = await runner.RunAsync(["mdns", "services"], TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
-            string? endpoint = ConnectionPreferencesStore.ResolveEndpoint(candidate.ServiceName, mdns.Succeeded ? mdns.StandardOutput : null) ?? candidate.Endpoint;
+            string[] endpoints = ConnectionPreferencesStore.ResolveEndpoints(candidate.ServiceName, mdns.Succeeded ? mdns.StandardOutput : null);
+            // A conflicting advertisement must not silently choose the first address
+            // or fall back to an old one. Only an absent match may use saved history.
+            if (endpoints.Length > 1) { return false; }
+            string? endpoint = endpoints.SingleOrDefault() ?? candidate.Endpoint;
             if (endpoint is null || !WirelessAdbEndpoint.TryNormalize(endpoint, out string normalized)) { return false; }
             AdbCommandResult result = await runner.RunAsync(["connect", normalized], TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
-            return result.Succeeded;
+            string output = result.StandardOutput.TrimStart();
+            connected = result.Succeeded && (output.StartsWith("connected to ", StringComparison.OrdinalIgnoreCase) ||
+                output.StartsWith("already connected to ", StringComparison.OrdinalIgnoreCase));
+            return connected;
         }
         catch (Exception exception) when (exception is AndroidConnectionException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         { return false; }
+        finally
+        {
+            if (!cancellationToken.IsCancellationRequested) { _managedReconnectRetry.Complete(candidate.DeviceKey, connected, Environment.TickCount64); }
+        }
     }
 
     private AdbDeviceRecord[] CanonicalizeManagedConnections(IReadOnlyList<AdbDeviceRecord> devices, string? services) =>

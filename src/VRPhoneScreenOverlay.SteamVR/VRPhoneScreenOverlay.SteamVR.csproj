@@ -8,6 +8,9 @@
 
   <ItemGroup>
     <PackageReference Include="Vortice.Direct3D11" />
+    <EmbeddedResource Include="Resources\UI\phone-disconnected.alpha" LogicalName="VRPhoneScreenOverlay.SteamVR.PhoneDisconnected" />
+    <EmbeddedResource Include="Resources\UI\phone-connecting.alpha" LogicalName="VRPhoneScreenOverlay.SteamVR.PhoneConnecting" />
+    <EmbeddedResource Include="Resources\UI\phone-failed.alpha" LogicalName="VRPhoneScreenOverlay.SteamVR.PhoneFailed" />
     <EmbeddedResource Include="Resources\UI\phone-rounded.vs.cso" WithCulture="false" LogicalName="VRPhoneScreenOverlay.SteamVR.PhoneRoundedVertex" />
     <EmbeddedResource Include="Resources\UI\phone-rounded.ps.cso" WithCulture="false" LogicalName="VRPhoneScreenOverlay.SteamVR.PhoneRoundedPixel" />
     <EmbeddedResource Include="Resources\UI\phone-menu-labels.alpha" LogicalName="VRPhoneScreenOverlay.SteamVR.PhoneMenuLabels" />
@@ -23,7 +26,7 @@
     <None Include="..\..\bindings\*.json"
           Link="bindings\%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest"
-          CopyToPublishDirectory="Never"
+          CopyToPublishDirectory="PreserveNewest"
           TargetPath="bindings\%(Filename)%(Extension)" />
     <None Update="Resources\SteamVR\manifest.vrmanifest"
           CopyToOutputDirectory="PreserveNewest"

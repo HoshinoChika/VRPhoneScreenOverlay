@@ -1,10 +1,12 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using Microsoft.Win32;
 
 namespace VRPhoneScreenOverlay.Diagnostics;
 
 internal static class IncidentEnvironmentCapture
 {
+    private static readonly string[] _runtimeNames = ["vrserver", "vrcompositor", "vrmonitor"];
     internal static IncidentEnvironment Capture()
     {
         List<IncidentDisplayDriver> drivers = [];
@@ -36,7 +38,30 @@ internal static class IncidentEnvironmentCapture
         { status = "collection-failed"; }
         return new(RuntimeInformation.OSDescription, RuntimeInformation.OSArchitecture.ToString(),
             RuntimeInformation.ProcessArchitecture.ToString(), RuntimeInformation.FrameworkDescription,
-            Environment.ProcessorCount, status, truncated, drivers.ToArray());
+            Environment.ProcessorCount, status, truncated, drivers.ToArray())
+        { SteamVrProcesses = CaptureRuntimeProcesses() };
+    }
+
+    private static IncidentRuntimeProcess[] CaptureRuntimeProcesses()
+    {
+        List<IncidentRuntimeProcess> result = [];
+        foreach (string name in _runtimeNames)
+        {
+            Process[] processes = [];
+            try
+            {
+                processes = Process.GetProcessesByName(name);
+                Process? process = processes.FirstOrDefault();
+                string? version = process?.MainModule?.FileVersionInfo.FileVersion;
+                if (version is not null && (version.Length > 80 || !version.All(c => char.IsAsciiDigit(c) || c is '.' or ',' or ' ')))
+                { version = null; }
+                result.Add(new(name, process is null ? "not-running-at-capture" : version is null ? "version-unavailable" : "sampled", version));
+            }
+            catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
+            { result.Add(new(name, "query-unavailable", null)); }
+            finally { foreach (Process process in processes) { process.Dispose(); } }
+        }
+        return result.ToArray();
     }
 
     private static string? SafeText(string? value)

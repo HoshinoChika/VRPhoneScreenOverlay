@@ -17,7 +17,7 @@ internal sealed record DiagnosticContextInput(
     string? LogPath, VideoTrialSnapshot? VideoTrials = null, bool? VideoAutomaticStartAllowed = null,
     VideoRecoveryCandidate? VideoRecovery = null, IReadOnlyList<BindingSnapshotRetentionDiagnostic>? BindingSnapshotRetention = null,
     SteamVrStartupStatus? SteamVrStartup = null, IReadOnlyList<PhoneControlFailureDiagnostic>? ControlFailures = null,
-    PhoneStartupDiagnostic? Startup = null);
+    PhoneStartupDiagnostic? Startup = null, ControllerDiscoverySnapshot? ControllerDiscovery = null);
 
 /// <summary>Privacy allowlist mapping from immutable snapshots, without UI controls or device calls.</summary>
 internal static class DiagnosticContextBuilder
@@ -42,6 +42,7 @@ internal static class DiagnosticContextBuilder
             {
                 ["appState"] = input.Runtime.State.ToString(),
                 ["startup"] = input.Startup,
+                ["controllerDiscovery"] = input.ControllerDiscovery,
                 ["playspaceEnabled"] = playspace.Enabled,
                 ["playspaceReason"] = playspace.ReasonCode,
                 ["playspaceMultiplier"] = playspace.Multiplier,
@@ -96,6 +97,7 @@ internal static class DiagnosticContextBuilder
                 ["playspaceGravity"] = settings.PlayspaceGravity,
                 ["playspaceFriction"] = settings.PlayspaceFriction,
                 ["playspaceResetAllOffsets"] = settings.PlayspaceResetAllOffsets,
+                ["playspaceButtonResetDisabled"] = settings.PlayspaceButtonResetDisabled,
             },
             CreateHardware(android, videoDiagnostics),
             new DiagnosticSessionSummary(
@@ -137,7 +139,19 @@ internal static class DiagnosticContextBuilder
                 playspace.Multiplier,
                 playspace.OffsetX,
                 playspace.OffsetY,
-                playspace.OffsetZ),
+                playspace.OffsetZ)
+            {
+                EncodedQueueBytes = videoDiagnostics.EncodedQueueBytes,
+                PeakEncodedQueueBytes = videoDiagnostics.PeakEncodedQueueBytes,
+                EncodedQueueByteOverflows = videoDiagnostics.EncodedQueueByteOverflows,
+                AudioPlayback = audioDiagnostics.PlaybackDiagnostic,
+                VideoClock = videoDiagnostics.VideoClock,
+                VideoColor = videoDiagnostics.VideoColor,
+                LatencyBreakdown = videoDiagnostics.LatencyBreakdown,
+                LatencySampleCount = videoDiagnostics.LatencySampleCount,
+                UnavailableLatencySampleCount = videoDiagnostics.UnavailableLatencySampleCount,
+                RejectedLatencySampleCount = videoDiagnostics.RejectedLatencySampleCount
+            },
             new DiagnosticBindingSummary(
                 bindingPreparation.Prepared,
                 bindingPreparation.Revision,

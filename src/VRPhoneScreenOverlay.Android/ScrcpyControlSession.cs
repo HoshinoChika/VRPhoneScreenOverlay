@@ -8,8 +8,11 @@ internal sealed class ScrcpyControlSession(
     ScrcpyTransportLease transport,
     ScrcpyControlProtocolWriter protocol,
     AndroidDisplaySize displaySize,
-    IAndroidConnectionLogSink log) : IAndroidControlSession
+    IAndroidConnectionLogSink log, IPhoneClipboardSink? clipboard = null) : IAndroidControlSession
 {
+    private readonly ScrcpyClipboardReceiver? _clipboard = clipboard is null ? null : new(transport.Stream, clipboard,
+        ended => log.TryWrite(new AndroidConnectionLogEntry(ended.At, "phone_clipboard_state", ended.ReasonCode,
+            "手机剪贴板接收结束", deviceKey, PacketCount: ended.FailureCount)));
     private readonly ScrcpyTransportLease _transport = transport;
     private readonly ScrcpyControlProtocolWriter _protocol = protocol;
     private ControlGeometryWriter? _geometry;
@@ -22,7 +25,7 @@ internal sealed class ScrcpyControlSession(
 
     public void AbortPendingOperations()
     {
-        if (Interlocked.Exchange(ref _aborted, 1) == 0) { _transport.AbortStream(); }
+        if (Interlocked.Exchange(ref _aborted, 1) == 0) { _clipboard?.RequestStop(); _transport.AbortStream(); }
     }
 
     public string DeviceKey { get; } = deviceKey;
@@ -163,6 +166,7 @@ internal sealed class ScrcpyControlSession(
         }
 
         _disposed = true;
+        _clipboard?.RequestStop();
         if (_displayPowerOff && Volatile.Read(ref _aborted) == 0 && !_transport.HasServerExited)
         {
             using CancellationTokenSource restore = new(TimeSpan.FromSeconds(2));
@@ -179,6 +183,7 @@ internal sealed class ScrcpyControlSession(
             }
         }
         await _transport.DisposeAsync().ConfigureAwait(false);
+        if (_clipboard is not null) { await _clipboard.DisposeAsync().ConfigureAwait(false); }
         _log.TryWrite(new AndroidConnectionLogEntry(
             DateTimeOffset.UtcNow,
             "control_stopped",

@@ -53,6 +53,16 @@ public partial class CloseConfirmationView : UserControl
         ApplyModeLayout(Width / 758f);
     }
 
+    internal void ConfigureExiting(bool failed = false)
+    {
+        ConfigureClose();
+        title.Text = "正在退出";
+        description.Text = failed ? "保存失败，正在等待结束本软件（最长约 20 秒）。" : "正在保存并退出；超时约 20 秒后自动结束本软件。";
+        minimizeButton.Enabled = false;
+        exitButton.Enabled = false;
+        cancelButton.Enabled = false;
+    }
+
     internal void ApplyModeLayout(float scale)
     {
         Rectangle Scaled(int x, int y, int width, int height) => new(

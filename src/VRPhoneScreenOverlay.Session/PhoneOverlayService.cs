@@ -55,9 +55,22 @@ public sealed record PhoneOverlaySnapshot(
     bool ScaleBound = false,
     bool ScaleActive = false)
 {
+    // The mean covers accepted samples over this session, not the latest frame.
+    public long EncodedQueueBytes { get; init; }
+    public long PeakEncodedQueueBytes { get; init; }
+    public long EncodedQueueByteOverflows { get; init; }
+    public VideoClockDiagnostic? VideoClock { get; init; }
+    public VideoColorMetadata? VideoColor { get; init; }
+    public VideoLatencyBreakdown? LatencyBreakdown { get; init; }
+    public long LatencySampleCount { get; init; }
+    public long UnavailableLatencySampleCount { get; init; }
+    public long RejectedLatencySampleCount { get; init; }
+    public bool HasLatencySamples => LatencySampleCount > 0 && double.IsFinite(AverageLatencyMilliseconds);
     public PhoneInputPathDiagnostic? InputPath { get; init; }
     public InputRoutingDiagnostic? InputRouting { get; init; }
     public long TotalEncodedBytes { get; init; }
+    public VideoUploadDiagnostic? UploadDiagnostic { get; init; }
+    public string PipelineStage { get; init; } = "unknown";
 }
 
 public sealed class PhoneOverlayChangedEventArgs(PhoneOverlaySnapshot snapshot) : EventArgs
@@ -101,7 +114,7 @@ public sealed class PhoneOverlayService(
     IAndroidConnectionLogSink log,
     IPhoneVideoPipelineFactory? pipelineFactory = null,
     IIncidentRecorder? incident = null, IVideoTrialStore? videoTrials = null,
-    Func<VideoTrialContext>? videoTrialContext = null) : IPhoneOverlayService
+    Func<VideoTrialContext>? videoTrialContext = null, VrMenuOverlayOwner? menuOwner = null) : IPhoneOverlayService
 {
     private PhoneInputRoutingEvidence _inputRouting = new();
     private readonly IPhoneVideoPipelineFactory _pipelineFactory = pipelineFactory ?? new PhoneVideoPipelineFactory();
@@ -126,6 +139,11 @@ public sealed class PhoneOverlayService(
 
     public async ValueTask SwitchControllerHandAsync(OpenVrControllerHand hand, CancellationToken cancellationToken)
     {
+        if (menuOwner is not null)
+        {
+            await menuOwner.SwitchControllerHandAsync(hand, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         IOpenVrSceneOverlay? overlay;
         lock (_gate)
         {
@@ -158,13 +176,27 @@ public sealed class PhoneOverlayService(
         }
     }
 
+    private IGpuVideoFramePresenter? _diagnosticPresenter;
+    private LatestAndroidVideoFrameReader? _diagnosticEncodedReader;
+    private string _pipelinePhase = "idle";
+
     public PhoneOverlaySnapshot DiagnosticSnapshot
     {
         get
         {
             lock (_gate)
             {
-                return _diagnosticSnapshot;
+                string phase = Volatile.Read(ref _pipelinePhase);
+                return _diagnosticSnapshot with
+                {
+                    // Retain media evidence, but never replay its historical lifecycle state.
+                    State = _snapshot.State,
+                    ReasonCode = _snapshot.ReasonCode,
+                    Message = _snapshot.Message,
+                    UploadDiagnostic = Volatile.Read(ref _diagnosticPresenter)?.UploadDiagnostic ?? _diagnosticSnapshot.UploadDiagnostic,
+                    PipelineStage = phase == "present" ? Volatile.Read(ref _diagnosticPresenter)?.DiagnosticStage ?? "present" : phase,
+                    TotalEncodedBytes = Volatile.Read(ref _diagnosticEncodedReader)?.EncodedPayloadBytes ?? _diagnosticSnapshot.TotalEncodedBytes
+                };
             }
         }
     }
@@ -175,6 +207,7 @@ public sealed class PhoneOverlayService(
         bool keepAwakeWhileGrabbed,
         bool unlockKeypadEnabled)
     {
+        menuOwner?.ConfigureLockScreenFeatures(keepAwakeWhileGrabbed, unlockKeypadEnabled);
         IOpenVrSceneOverlay? overlay;
         lock (_gate)
         {
@@ -239,7 +272,7 @@ public sealed class PhoneOverlayService(
                 _runTask is { IsCompleted: false };
         }
 
-        if (overlayActive)
+        if (overlayActive || menuOwner?.IsReady == true)
         {
             return new OpenVrBindingResult(
                 false,
@@ -459,6 +492,7 @@ public sealed class PhoneOverlayService(
                 }
 
                 latestFrames = new LatestAndroidVideoFrameReader(session, cancellationToken);
+                Volatile.Write(ref _diagnosticEncodedReader, latestFrames);
 #pragma warning disable CA2000 // The outer finally awaits reader disposal, including when checkpoint recording fails; analyzer does not follow this callback-owning reader's async cleanup.
                 decodedFrames = new LatestDecodedVideoFrameReader(latestFrames, packet =>
                 {
@@ -538,16 +572,25 @@ public sealed class PhoneOverlayService(
                             {
                                 Geometry = new("gpu-convert", decoded.Width, decoded.Height, decoded.VisibleWidth, decoded.VisibleHeight,
                                 decoded.Stride, decoded.Pixels.Length, Layout: "nv12-to-rgba")
+                                { Upload = presenter.UploadDiagnostic }
                             }, cancellationToken).ConfigureAwait(false);
                         }
+                        Volatile.Write(ref _diagnosticPresenter, presenter);
+                        Volatile.Write(ref _pipelinePhase, "present");
+                        long conversionStartedAt = Stopwatch.GetTimestamp();
                         GpuVideoFrame gpuFrame = presenter.Present(decoded);
+                        long conversionCompletedAt = Stopwatch.GetTimestamp();
                         if (firstSubmission)
                         {
                             await RecordStageAsync(new("first-convert", "succeeded", Width: gpuFrame.Width, Height: gpuFrame.Height, Generation: generation)
                             { Geometry = gpuFrame.Geometry }, cancellationToken).ConfigureAwait(false);
                             await RecordStageAsync(new("first-submit", "started", Generation: generation), cancellationToken).ConfigureAwait(false);
                         }
+                        Volatile.Write(ref _pipelinePhase, "openvr-submit");
+                        long submissionStartedAt = Stopwatch.GetTimestamp();
                         overlay.Submit(gpuFrame);
+                        long submittedAt = Stopwatch.GetTimestamp();
+                        Volatile.Write(ref _pipelinePhase, "submitted");
                         if (firstSubmission)
                         {
                             await RecordStageAsync(new("first-submit", "succeeded", Generation: generation), cancellationToken).ConfigureAwait(false);
@@ -562,9 +605,16 @@ public sealed class PhoneOverlayService(
                         }
                         metrics.RecordSubmittedFrame(
                             frame.EstimatedCaptureTimestamp is long captureTimestamp
-                                ? Stopwatch.GetElapsedTime(captureTimestamp, Stopwatch.GetTimestamp())
+                                ? Stopwatch.GetElapsedTime(captureTimestamp, submittedAt)
                                     .TotalMilliseconds
-                                : null);
+                                : null,
+                            new VideoFrameStageDurations(
+                                ElapsedMilliseconds(frame.ReceivedTimestamp, frame.DecodeStartedTimestamp),
+                                ElapsedMilliseconds(frame.DecodeStartedTimestamp, frame.OutputReadyTimestamp),
+                                ElapsedMilliseconds(frame.OutputReadyTimestamp, submittedAt),
+                                ElapsedMilliseconds(conversionStartedAt, conversionCompletedAt),
+                                ElapsedMilliseconds(submissionStartedAt, submittedAt),
+                                ElapsedMilliseconds(frame.EstimatedCaptureTimestamp, frame.ReceivedTimestamp)));
                         if (!stableRecorded && trialId is not null && firstSubmittedAt is long firstAt &&
                             metrics.SubmittedFrames >= 30 && Stopwatch.GetElapsedTime(firstAt) >= TimeSpan.FromSeconds(30))
                         {
@@ -646,7 +696,21 @@ public sealed class PhoneOverlayService(
                             interaction.GrabActive,
                             interaction.ScaleBound,
                             interaction.ScaleActive)
-                        { InputPath = interaction.InputPath, InputRouting = Snapshot.InputRouting, TotalEncodedBytes = metrics.TotalEncodedBytes };
+                        {
+                            UploadDiagnostic = presenter.UploadDiagnostic,
+                            InputPath = interaction.InputPath,
+                            InputRouting = Snapshot.InputRouting,
+                            TotalEncodedBytes = metrics.TotalEncodedBytes,
+                            EncodedQueueBytes = latestFrames.QueuedPayloadBytes,
+                            PeakEncodedQueueBytes = latestFrames.PeakQueuedPayloadBytes,
+                            EncodedQueueByteOverflows = latestFrames.ByteBudgetOverflows,
+                            VideoClock = frame.Clock,
+                            VideoColor = decoded.Color,
+                            LatencyBreakdown = metrics.LatencyBreakdown,
+                            LatencySampleCount = metrics.LatencySampleCount,
+                            UnavailableLatencySampleCount = metrics.UnavailableLatencySampleCount,
+                            RejectedLatencySampleCount = metrics.RejectedLatencySampleCount
+                        };
                         Publish(running);
                         if (logGate.ShouldLogSubmittedSize(gpuFrame.Width, gpuFrame.Height))
                         {
@@ -697,7 +761,10 @@ public sealed class PhoneOverlayService(
                     await RecordStageAsync(new("video-cleanup/decoder", "failed"), CancellationToken.None).ConfigureAwait(false);
                 }
                 await CleanupAsync("encoded-reader", async () =>
-                { if (latestFrames is not null) { await latestFrames.DisposeAsync().ConfigureAwait(false); } }).ConfigureAwait(false);
+                {
+                    try { if (latestFrames is not null) { await latestFrames.DisposeAsync().ConfigureAwait(false); } }
+                    finally { Volatile.Write(ref _diagnosticEncodedReader, null); }
+                }).ConfigureAwait(false);
                 await CleanupAsync("keyguard", async () =>
                 {
                     await keyguardLifetime.CancelAsync().ConfigureAwait(false);
@@ -888,6 +955,15 @@ public sealed class PhoneOverlayService(
             {
                 VideoQuality = new(video.FramesPerSecond, video.AverageBitrateMbps, video.AverageLatencyMilliseconds, video.SubmittedFrames, video.DroppedFrames)
                 {
+                    EncodedQueueBytes = video.EncodedQueueBytes,
+                    PeakEncodedQueueBytes = video.PeakEncodedQueueBytes,
+                    EncodedQueueByteOverflows = video.EncodedQueueByteOverflows,
+                    VideoClock = video.VideoClock,
+                    VideoColor = video.VideoColor,
+                    LatencyBreakdown = video.LatencyBreakdown,
+                    LatencySampleCount = video.LatencySampleCount,
+                    UnavailableLatencySampleCount = video.UnavailableLatencySampleCount,
+                    RejectedLatencySampleCount = video.RejectedLatencySampleCount,
                     PeakBitrateMbps = video.PeakBitrateMbps,
                     RequestedResolutionPercent = video.RequestedResolutionPercent,
                     RequestedBitrateMbps = video.RequestedBitrateMbps,
@@ -896,6 +972,9 @@ public sealed class PhoneOverlayService(
             });
         }
     }
+
+    private static double? ElapsedMilliseconds(long? start, long? end) =>
+        start is long first && end is long last ? Stopwatch.GetElapsedTime(first, last).TotalMilliseconds : null;
 
     private static bool RequiresVideoParameterReview(Exception error)
     {
@@ -912,6 +991,7 @@ public sealed class PhoneOverlayService(
 
     private static PhoneOverlayServiceException MapFailure(Exception exception) => exception switch
     {
+        BindingToolComponentException component => new(component.ReasonCode, component.Message, component),
         VideoTrialException trial => new(trial.ReasonCode, trial.Message, trial),
         PhoneOverlayServiceException failure => failure,
         AndroidConnectionException failure => new(

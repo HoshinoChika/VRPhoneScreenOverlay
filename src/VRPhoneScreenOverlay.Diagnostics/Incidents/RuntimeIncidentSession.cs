@@ -19,6 +19,7 @@ public sealed class RuntimeIncidentSession : IIncidentRecorder, IDisposable
     private IncidentFailureHistory _failures = new(0, []);
     private Func<DiagnosticRuntimeHealth>? _healthProvider;
     private bool _disposed;
+    private int _shutdownArmed;
     private long _nextRetention;
 
     private RuntimeIncidentSession(string directory, IncidentState state, FileStream? lease)
@@ -30,8 +31,28 @@ public sealed class RuntimeIncidentSession : IIncidentRecorder, IDisposable
     }
 
     public string SessionId => _state.SessionId;
+    public event EventHandler? FailureRecorded;
     public string StorageStatus { get; private set; } = "ready";
     public long StorageFailures => Interlocked.Read(ref _storageFailures);
+    internal async ValueTask<bool> SaveFlightAsync(string name, FlightRecord record, CancellationToken token)
+    {
+        try
+        {
+            await IncidentStorage.WriteAsync(Path.Combine(_directory, name), record,
+                FlightJsonContext.Default.FlightRecord, token).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception error) when (IncidentStorage.IsStorageFailure(error)) { StorageFailed(); return false; }
+    }
+    internal async ValueTask<bool> SaveFlightBytesAsync(string name, ReadOnlyMemory<byte> data, bool durable, CancellationToken token)
+    {
+        try
+        {
+            await IncidentStorage.WriteBytesAsync(Path.Combine(_directory, name), data, token, durable).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception error) when (IncidentStorage.IsStorageFailure(error)) { StorageFailed(); return false; }
+    }
     internal void SetHealthProvider(Func<DiagnosticRuntimeHealth> provider) => _healthProvider = provider;
 
     public static async ValueTask<RuntimeIncidentSession> StartAsync(
@@ -97,6 +118,24 @@ public sealed class RuntimeIncidentSession : IIncidentRecorder, IDisposable
         finally { _writer.Release(); }
     }
 
+    public async Task ArmShutdownAsync()
+    {
+        if (Interlocked.Exchange(ref _shutdownArmed, 1) != 0) { return; }
+        IncidentShutdownIntent intent = new(SessionId, _state.ProcessId, _state.ProcessStartTicks, Environment.TickCount64);
+        Task write = Task.Run(async () =>
+        {
+            using CancellationTokenSource budget = new(TimeSpan.FromMilliseconds(250));
+            await IncidentStorage.WriteAsync(Path.Combine(_directory, "shutdown-intent.json"), intent,
+                IncidentJsonContext.Default.IncidentShutdownIntent, budget.Token).ConfigureAwait(false);
+        });
+        try { await write.WaitAsync(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false); }
+        catch (Exception error) when (error is TimeoutException or OperationCanceledException || IncidentStorage.IsStorageFailure(error))
+        {
+            _ = write.ContinueWith(done => { _ = done.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+    }
+
     public async ValueTask CompleteAsync(CancellationToken cancellationToken = default)
     {
         await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -111,6 +150,7 @@ public sealed class RuntimeIncidentSession : IIncidentRecorder, IDisposable
     public void RecordFailure(Exception error, string kind)
     {
         ArgumentNullException.ThrowIfNull(error);
+        NotifyFailure();
         try
         {
             IncidentFailure failure = IncidentExceptionCapture.Capture(error, kind, null);
@@ -122,6 +162,7 @@ public sealed class RuntimeIncidentSession : IIncidentRecorder, IDisposable
     public async ValueTask FailureAsync(Exception exception, string kind, string? attemptId, CancellationToken cancellationToken)
     {
         if (_disposed) { return; }
+        NotifyFailure();
         await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -141,7 +182,7 @@ public sealed class RuntimeIncidentSession : IIncidentRecorder, IDisposable
         finally { _writer.Release(); }
     }
 
-    internal async ValueTask<string> SaveHealthAsync(DiagnosticRuntimeHealth health, CancellationToken token)
+    internal async ValueTask<string> SaveHealthAsync(DiagnosticRuntimeHealth health, CancellationToken token, bool durable = true)
     {
         try
         {
@@ -161,7 +202,7 @@ public sealed class RuntimeIncidentSession : IIncidentRecorder, IDisposable
                 }
             }
             await IncidentStorage.WriteAsync(Path.Combine(_directory, "health.json"), health,
-                IncidentJsonContext.Default.DiagnosticRuntimeHealth, token).ConfigureAwait(false);
+                IncidentJsonContext.Default.DiagnosticRuntimeHealth, token, durable).ConfigureAwait(false);
             return "ready";
         }
         catch (Exception error) when (IncidentStorage.IsStorageFailure(error)) { StorageFailed(); return "write-failed"; }
@@ -212,7 +253,29 @@ public sealed class RuntimeIncidentSession : IIncidentRecorder, IDisposable
         StorageStatus = "write-failed";
     }
 
+    private void NotifyFailure()
+    {
+        try { FailureRecorded?.Invoke(this, EventArgs.Empty); }
+        catch (Exception)
+        {
+            // A diagnostic subscriber must never replace the original application failure.
+            StorageFailed();
+        }
+    }
+
     private async ValueTask StartMonitorAsync(string executable, CancellationToken token)
+    {
+        using CancellationTokenSource budget = CancellationTokenSource.CreateLinkedTokenSource(token);
+        budget.CancelAfter(TimeSpan.FromSeconds(3));
+        try { await StartMonitorCoreAsync(executable, budget.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            _state = _state with { MonitorStatus = "startup-timeout" };
+            await CheckpointAsync(new("exit-observer", "startup-timeout"), token).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask StartMonitorCoreAsync(string executable, CancellationToken token)
     {
         string status = "storage-unavailable";
         if (StorageStatus == "ready")
@@ -265,7 +328,7 @@ public sealed class RuntimeIncidentSession : IIncidentRecorder, IDisposable
                 }
                 if (monitor is null || monitor.HasExited) { status = "start-failed"; }
             }
-            catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
+            catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or System.Security.SecurityException or BadImageFormatException)
             { status = "start-failed"; }
         }
         _state = _state with { MonitorStatus = status };

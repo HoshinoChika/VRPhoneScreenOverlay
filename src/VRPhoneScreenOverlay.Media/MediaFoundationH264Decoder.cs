@@ -9,8 +9,8 @@ namespace VRPhoneScreenOverlay.Media;
 
 internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
 {
-    private const int _inputStreamId = 0;
-    private const int _outputStreamId = 0;
+    private int _inputStreamId;
+    private int _outputStreamId;
     private readonly IMFTransform _transform;
     private readonly byte[] _codecConfiguration;
     private readonly int _framesPerSecond;
@@ -19,6 +19,7 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
     private int _width;
     private int _height;
     private int _stride;
+    private VideoColorMetadata _color;
     private int _inputAlignmentMask = 15;
     private int _inputMinimumBytes;
     private bool _prependConfiguration = true;
@@ -78,17 +79,18 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
 
         try
         {
-            MFStartup().CheckError();
+            MediaFoundationStartup.Run(() => MFStartup().CheckError());
             _mediaFoundationStarted = true;
-            (_transform, BackendName) = DecoderCandidateSelection.Select(
-                () => TryCreateHardwareDecoder(observe),
-                () => CreateSoftwareDecoder(observe),
+            (_transform, BackendName) = DecoderCandidateSelection.SelectCandidates(
+                () => EnumerateDecoders(EnumFlag.EnumFlagHardware, "hardware", observe),
+                () => EnumerateDecoders(EnumFlag.EnumFlagSyncmft, "software", observe),
                 candidate =>
                 {
                     // A rejected candidate may have selected padded output geometry.
                     _width = width; _height = height; _stride = width;
                     ConfigureTransform(candidate, observe);
-                }, observe, ReleaseTransform, preference == VideoDecoderPreference.Software);
+                }, observe, ReleaseTransform, preference == VideoDecoderPreference.Software,
+                () => EnumerateDecoders(EnumFlag.EnumFlagAsyncmft, "software-async", observe));
             if (_asynchronous)
             {
                 _asyncFlow = new();
@@ -380,64 +382,34 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         }
     }
 
-    private static (IMFTransform Transform, string Name)? TryCreateHardwareDecoder(Action<DecoderInitializationEvent>? observe)
+    private static IEnumerable<Func<(IMFTransform Resource, string Name)?>> EnumerateDecoders(
+        EnumFlag category, string kind, Action<DecoderInitializationEvent>? observe)
     {
         RegisterTypeInfo inputType = new()
         {
             GuidMajorType = MediaTypeGuids.Video,
             GuidSubtype = VideoFormatGuids.H264Es,
         };
-        return TryActivateDecoder(
-            inputType,
-            EnumFlag.EnumFlagHardware | EnumFlag.EnumFlagAsyncmft | EnumFlag.EnumFlagSortandfilter,
-            "hardware", observe);
-    }
-
-    private static (IMFTransform Transform, string Name) CreateSoftwareDecoder(Action<DecoderInitializationEvent>? observe)
-    {
-        RegisterTypeInfo inputType = new()
-        {
-            GuidMajorType = MediaTypeGuids.Video,
-            GuidSubtype = VideoFormatGuids.H264Es,
-        };
-        (IMFTransform Transform, string Name)? decoder = TryActivateDecoder(
-            inputType,
-            EnumFlag.EnumFlagSyncmft | EnumFlag.EnumFlagSortandfilter,
-            "software", observe);
-        if (decoder is not null)
-        {
-            return decoder.Value;
-        }
-
-        throw new MediaDecoderException(
-            MediaReasonCodes.H264DecoderNotFound,
-            "Windows 没有可用的 H.264 解码器");
-    }
-
-    private static (IMFTransform Transform, string Name)? TryActivateDecoder(
-        RegisterTypeInfo inputType,
-        EnumFlag flags,
-        string kind,
-        Action<DecoderInitializationEvent>? observe)
-    {
         using IMFActivateCollection activations = MFTEnumEx(
             TransformCategoryGuids.VideoDecoder,
-            (uint)flags,
+            (uint)(category | EnumFlag.EnumFlagSortandfilter),
             inputType,
             null);
         foreach (IMFActivate activation in activations)
         {
             using (activation)
             {
-                string name = string.IsNullOrWhiteSpace(activation.FriendlyName)
-                    ? "Windows Media Foundation H.264"
-                    : activation.FriendlyName;
-                observe?.Invoke(new(kind, "activation-started", name));
-                return (activation.ActivateObject<IMFTransform>(), $"{name} ({kind})");
+                // Activation and configuration happen while this iterator owns the activation.
+                yield return () =>
+                {
+                    string name = string.IsNullOrWhiteSpace(activation.FriendlyName)
+                        ? "Windows Media Foundation H.264"
+                        : activation.FriendlyName;
+                    observe?.Invoke(new(kind, "activation-started", name));
+                    return (activation.ActivateObject<IMFTransform>(), $"{name} ({kind})");
+                };
             }
         }
-
-        return null;
     }
 
     private void ConfigureTransform(IMFTransform transform, Action<DecoderInitializationEvent>? observe)
@@ -456,6 +428,10 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
             }
             attributes.Set(SinkWriterAttributeKeys.LowLatency, 1U).CheckError();
         }
+
+        transform.GetStreamCount(out int inputCount, out int outputCount);
+        (_inputStreamId, _outputStreamId) = MftStreamIdentifiers.Resolve(inputCount, outputCount,
+            (inputs, outputs) => transform.GetStreamIDs(inputs.Length, inputs, outputs.Length, outputs));
 
         using IMFMediaType inputType = MFCreateMediaType();
         inputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video).CheckError();
@@ -544,6 +520,7 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         long nextStride = strideResult.Success ? unchecked((int)rawStride) : nextWidth;
         Nv12Geometry.Validate(new("decoder-output-type", nextWidth, nextHeight, _visibleWidth, _visibleHeight,
             nextStride, 0, Layout: "media-type", DefaultStride: nextStride), requireBytes: false);
+        _color = MediaFoundationVideoColor.Read(outputType);
         _width = checked((int)nextWidth);
         _height = checked((int)nextHeight);
         _stride = checked((int)nextStride);
@@ -718,7 +695,9 @@ internal sealed class MediaFoundationH264Decoder : IH264VideoDecoder
         try
         {
             using IMFMediaBuffer buffer = sample.BufferCount == 1 ? sample.GetBufferByIndex(0) : sample.ConvertToContiguousBuffer();
-            return MediaFoundationFrameCopy.Copy(buffer, _width, _height, _stride, _visibleWidth, _visibleHeight, sample.SampleTime / 10);
+            DecodedVideoFrame frame = MediaFoundationFrameCopy.Copy(buffer, _width, _height, _stride, _visibleWidth, _visibleHeight, sample.SampleTime / 10);
+            frame.Color = _color;
+            return frame;
         }
         catch (Exception error) when (error is SharpGenException or COMException)
         {

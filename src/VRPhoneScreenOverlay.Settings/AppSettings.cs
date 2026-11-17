@@ -31,7 +31,10 @@ public sealed record AppSettings(
     bool PlayspaceResetAllOffsets = false,
     bool PicoMicrophoneKeeperEnabled = false,
     float PlayspaceMultiplier = 1,
-    bool PlayspaceInertiaEnabled = false)
+    bool PlayspaceInertiaEnabled = false,
+    bool PlayspaceButtonResetDisabled = false,
+    bool VrcPhotoSyncEnabled = false,
+    string VideoUploadMode = "auto")
 {
     public const int CurrentSchemaVersion = 8;
 
@@ -79,6 +82,12 @@ public interface IAppSettingsService : IDisposable
 
     public ValueTask ToggleScreenGuardAsync(CancellationToken cancellationToken) =>
         SaveNonMotionAsync(Snapshot.Value with { AutoTurnOffPhoneScreen = !Snapshot.Value.AutoTurnOffPhoneScreen }, cancellationToken);
+
+    public ValueTask SaveVideoUploadModeAsync(string mode, CancellationToken token) =>
+        SaveAsync(Snapshot.Value with { VideoUploadMode = mode }, token);
+
+    public ValueTask SavePhotoSyncAsync(bool enabled, CancellationToken token) =>
+        SaveNonMotionAsync(Snapshot.Value with { VrcPhotoSyncEnabled = enabled }, token);
 
     public ValueTask SaveChoicesAsync(AppSettings choices, CancellationToken cancellationToken) =>
         SaveNonMotionAsync(choices, cancellationToken);

@@ -3,7 +3,8 @@ using Valve.VR;
 namespace VRPhoneScreenOverlay.SteamVR;
 
 internal readonly record struct OpenVrPhoneMenuHit(OpenVrMenuTarget Target, float SliderFraction,
-    VROverlayIntersectionResults_t Intersection, OpenVrPhoneSurface Surface = OpenVrPhoneSurface.Phone);
+    VROverlayIntersectionResults_t Intersection, OpenVrPhoneSurface Surface = OpenVrPhoneSurface.Phone,
+    TranslationPanelHit? TranslationHit = null, ClipboardPanelHit? ClipboardHit = null);
 
 internal static class OpenVrPhoneMenuLayout
 {
@@ -60,6 +61,7 @@ internal static class OpenVrPhoneMenuLayout
         if (!float.IsFinite(x) || !float.IsFinite(y) || x is < 0 or > 1 || y < 0 || y * Height > (motion || video ? MotionHeight : keypad ? 564 : 500)) { return false; }
         float px = x * Width;
         float py = y * Height;
+        if (!VRPhoneScreenOverlay.Presentation.RoundedPanelGeometry.Contains(px, py, Width, motion || video ? MotionHeight : keypad ? 564 : 500)) { return false; }
         if (video)
         {
             if (py is >= 12 and < 68) { target = OpenVrMenuTarget.VideoBack; }
@@ -90,7 +92,7 @@ internal static class OpenVrPhoneMenuLayout
         else if (py is >= 234 and < 294) { target = OpenVrMenuTarget.ScreenGuardToggle; }
         else if (py is >= 298 and < 358) { target = OpenVrMenuTarget.PlayspaceToggle; }
         else if (py is >= 366 and < 430) { target = OpenVrMenuTarget.FlingToggle; }
-        else if (py is >= 440 and < 482 && px is >= 20 and < 340) { target = OpenVrMenuTarget.MotionSettings; }
+        else if (py is >= 440 and < 482 && px is >= 20 and < 340) { target = px < 236 ? OpenVrMenuTarget.MotionSettings : px >= 244 ? OpenVrMenuTarget.PlayspaceReset : OpenVrMenuTarget.None; }
         else if (keypad && py is >= 506 and < 562) { target = OpenVrMenuTarget.KeypadToggle; }
         return true; // Blank areas inside the panel still count as inside, not outside-dismiss.
     }

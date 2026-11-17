@@ -146,15 +146,16 @@ internal sealed class ConnectionPreferencesStore(string? path)
 
     public static string? ResolveEndpoint(string? service, string? services)
     {
-        if (service is null || services is null) { return null; }
-        foreach (string line in services.Split('\n'))
-        {
-            string[] fields = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (fields.Length == 3 && fields[1].TrimEnd('.') == "_adb-tls-connect._tcp" &&
-                fields[0].TrimEnd('.') + "._adb-tls-connect._tcp" == service.TrimEnd('.') &&
-                WirelessAdbEndpoint.TryNormalize(fields[2], out string endpoint)) { return endpoint; }
-        }
-        return null;
+        string[] endpoints = ResolveEndpoints(service, services);
+        return endpoints.Length == 1 ? endpoints[0] : null;
+    }
+
+    internal static string[] ResolveEndpoints(string? service, string? services)
+    {
+        const string suffix = "._adb-tls-connect._tcp";
+        string? normalized = service?.TrimEnd('.');
+        if (normalized is null || services is null || !normalized.EndsWith(suffix, StringComparison.Ordinal)) { return []; }
+        return WirelessAdbEndpoint.FindServices(services, "_adb-tls-connect._tcp", normalized[..^suffix.Length], null);
     }
 
     public static string Scope(SavedAndroidConnection saved) => Scope(AndroidPhysicalDeviceIdentity.Saved(saved), saved.Transport);

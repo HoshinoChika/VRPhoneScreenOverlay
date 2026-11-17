@@ -4,7 +4,7 @@ namespace VRPhoneScreenOverlay.SteamVR;
 
 internal static class OpenVrBindingStartup
 {
-    private const int _bindingToolTimeoutMilliseconds = 3_000;
+    private const int _bindingToolTimeoutMilliseconds = 10_000;
     private static readonly object _gate = new();
     private static bool _prepared;
     private static string? _actionManifestPath;
@@ -45,7 +45,7 @@ internal static class OpenVrBindingStartup
                 return new OpenVrBindingResult(
                     true,
                     OpenVrReasonCodes.LocalBindingPrepared,
-                    "已准备并强制激活程序本地绑定");
+                    "已准备程序本地绑定文件，尚未激活");
             }
             catch (Exception exception) when (
                 exception is IOException or UnauthorizedAccessException or InvalidDataException or
@@ -58,8 +58,8 @@ internal static class OpenVrBindingStartup
                 _diagnosticSnapshot = OpenVrBindingPreparationSnapshot.NotPrepared;
                 return new OpenVrBindingResult(
                     false,
-                    OpenVrReasonCodes.LocalBindingPrepareFailed,
-                    "无法准备本地手柄绑定，请确认 SteamVR 正在运行后重试");
+                    exception is BindingToolComponentException component ? component.ReasonCode : OpenVrReasonCodes.LocalBindingPrepareFailed,
+                    exception is BindingToolComponentException ? exception.Message : "无法准备本地手柄绑定，请确认 SteamVR 正在运行后重试");
             }
         }
     }
@@ -119,7 +119,6 @@ internal static class OpenVrBindingStartup
             revisionAfterPrepare = store.GetSavedBindingRevision();
         }
 
-        RunBindingTool();
         _actionManifestPath = prepared.ActionManifestPath;
         _savedBindingRevision = revisionAfterPrepare;
         _preparedHand = OpenVrControllerPreferences.Load();
@@ -138,56 +137,35 @@ internal static class OpenVrBindingStartup
 
     internal static async Task EnrichLivePreparedAsync(OpenVrControllerHand hand, CancellationToken token)
     {
-        string executable = Path.Combine(AppContext.BaseDirectory, "VRPhoneScreenOverlay.SteamVR.BindingTool.exe");
-        using Process process = Process.Start(new ProcessStartInfo
-        {
-            FileName = executable,
-            Arguments = "enrich-local-binding " + (hand == OpenVrControllerHand.Left ? "left" : "right"),
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden,
-        }) ?? throw new InvalidOperationException("无法启动绑定驱动适配工具");
-        using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-        deadline.CancelAfter(TimeSpan.FromSeconds(5));
-        try { await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false); }
-        catch
-        {
-            if (!process.HasExited) { process.Kill(entireProcessTree: true); }
-            using CancellationTokenSource cleanup = new(TimeSpan.FromSeconds(2));
-            await process.WaitForExitAsync(cleanup.Token).ConfigureAwait(false);
-            throw;
-        }
-        if (process.ExitCode != 0) { throw new InvalidOperationException("绑定驱动适配未完成"); }
+        await BindingToolComponents.Current().EnsureAsync(token).ConfigureAwait(false);
+        OpenVrBindingResult result = await RunCheckedUtilityAsync("enrich-local-binding " +
+            (hand == OpenVrControllerHand.Left ? "left" : "right"), TimeSpan.FromSeconds(5), token).ConfigureAwait(false);
+        CheckUtilityResult(result);
     }
 
-    private static void RunBindingTool()
+    internal static async ValueTask<OpenVrBindingResult> ActivateAsync(CancellationToken token, Action? beforeStart = null)
     {
-        string executable = Path.Combine(
-            AppContext.BaseDirectory,
-            "VRPhoneScreenOverlay.SteamVR.BindingTool.exe");
-        if (!File.Exists(executable))
-        {
-            throw new FileNotFoundException("SteamVR 本地绑定准备工具未随程序发布", executable);
-        }
+        try { await BindingToolComponents.Current().EnsureAsync(token).ConfigureAwait(false); }
+        catch (BindingToolComponentException error) { return new(false, error.ReasonCode, error.Message); }
+        return await RunCheckedUtilityAsync("activate-local-binding", TimeSpan.FromMilliseconds(_bindingToolTimeoutMilliseconds), token, beforeStart).ConfigureAwait(false);
+    }
 
-        using Process process = Process.Start(new ProcessStartInfo
+    internal static Task<OpenVrBindingResult> RunCheckedUtilityAsync(string arguments, TimeSpan timeout, CancellationToken token, Action? beforeStart = null)
+        => OpenVrStartupRegistration.RunCoordinatedUtilityAsync(new ProcessStartInfo
         {
-            FileName = executable,
-            Arguments = "activate-local-binding",
+            FileName = Path.Combine(AppContext.BaseDirectory, "VRPhoneScreenOverlay.SteamVR.BindingTool.exe"),
+            Arguments = arguments,
             UseShellExecute = false,
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden,
-        }) ?? throw new InvalidOperationException("无法启动 SteamVR 本地绑定准备工具");
-        if (!process.WaitForExit(_bindingToolTimeoutMilliseconds))
-        {
-            process.Kill(true);
-            if (!process.WaitForExit(1000)) { throw new InvalidOperationException("SteamVR 本地绑定准备工具清理未完成"); }
-            throw new InvalidOperationException("SteamVR 本地绑定准备工具运行超时");
-        }
+            RedirectStandardOutput = true,
+        }, timeout, token, beforeStart).AsTask();
 
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException("SteamVR 本地绑定准备工具执行失败");
-        }
+    private static void CheckUtilityResult(OpenVrBindingResult result)
+    {
+        if (result.Succeeded) { return; }
+        if (result.ReasonCode.StartsWith("BINDING_COMPONENT_", StringComparison.Ordinal))
+        { throw new BindingToolComponentException(result.ReasonCode); }
+        throw new InvalidOperationException(result.Message);
     }
 }

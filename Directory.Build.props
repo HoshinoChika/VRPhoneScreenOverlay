@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <VersionPrefix>0.2.8</VersionPrefix>
+    <VersionPrefix>0.3.0</VersionPrefix>
     <Product>VRPhoneScreen Overlay</Product>
     <Authors>VRPhoneScreen Overlay contributors</Authors>
     <Copyright>Copyright (c) VRPhoneScreen Overlay contributors</Copyright>
@@ -19,6 +19,10 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <!-- Every supported artifact is Windows x64; keep RID data in lock files so publish restores stay deterministic. -->
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <!-- Compatibility: CET-enabled .NET hosts fail before Main on some unpatched
+         Windows 10 systems. Applies to apphost and single-file maintenance hosts;
+         intentionally trades their CET shadow-stack protection for startup compatibility. -->
+    <CETCompat>false</CETCompat>
     <DebugType>portable</DebugType>
     <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>

@@ -2,7 +2,7 @@ namespace VRPhoneScreenOverlay.SteamVR;
 
 internal static class OpenVrPhoneShellGeometry
 {
-    public const float CornerRadius = 0.045f;
+    public const float CornerRadius = VRPhoneScreenOverlay.Presentation.RoundedPanelGeometry.CornerRadiusRatio;
     private const float _border = 0.012f;
     public const int TextureSize = 512;
 

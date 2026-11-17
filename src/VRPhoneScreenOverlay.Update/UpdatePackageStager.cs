@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Security.Cryptography;
 using VRPhoneScreenOverlay.Contracts;
 using VRPhoneScreenOverlay.Network;
@@ -105,7 +104,7 @@ internal static class UpdatePackageStager
                 installParent,
                 $".{AppIdentity.LocalDataFolderName}-stage-{token}");
             Directory.CreateDirectory(stageDirectory);
-            ExtractPackage(downloadPath, stageDirectory);
+            await UpdateArchiveExtractor.ExtractAsync(downloadPath, stageDirectory, cancellationToken).ConfigureAwait(false);
             try
             {
                 UpdateInstallLayout.PrepareFullPackageStage(stageDirectory);
@@ -169,32 +168,6 @@ internal static class UpdatePackageStager
             UriBuilder refresh = new(release.RefreshUri) { Query = "refresh=true" };
             return await client.SendAsync(() => new HttpRequestMessage(HttpMethod.Get, refresh.Uri),
                 NetworkRetryPolicy.None, HttpCompletionOption.ResponseHeadersRead, null, cancellationToken);
-        }
-    }
-
-    private static void ExtractPackage(string packagePath, string stageDirectory)
-    {
-        string stagePrefix = Path.GetFullPath(stageDirectory)
-            .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        using ZipArchive archive = ZipFile.OpenRead(packagePath);
-        foreach (ZipArchiveEntry entry in archive.Entries)
-        {
-            string destination = Path.GetFullPath(Path.Combine(stageDirectory, entry.FullName));
-            if (!destination.StartsWith(stagePrefix, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new UpdateException(
-                    UpdateReasonCodes.PackagePathInvalid,
-                    "更新包包含无效路径");
-            }
-
-            if (string.IsNullOrEmpty(entry.Name))
-            {
-                Directory.CreateDirectory(destination);
-                continue;
-            }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            entry.ExtractToFile(destination, overwrite: false);
         }
     }
 

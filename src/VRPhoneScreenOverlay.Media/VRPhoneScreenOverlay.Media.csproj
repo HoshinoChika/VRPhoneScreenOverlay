@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\VRPhoneScreenOverlay.Contracts\VRPhoneScreenOverlay.Contracts.csproj" />
@@ -8,6 +8,11 @@
     <PackageReference Include="Concentus" />
     <PackageReference Include="NAudio" />
     <PackageReference Include="Vortice.MediaFoundation" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\CameraShutter.pcm" />
+    <EmbeddedResource Include="Assets\CameraShutter.LICENSE.txt" />
   </ItemGroup>
 
   <PropertyGroup>

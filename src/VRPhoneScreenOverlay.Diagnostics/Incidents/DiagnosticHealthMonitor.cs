@@ -84,7 +84,7 @@ public sealed class DiagnosticHealthMonitor : IDisposable
         {
             _worker.WaitAsync(TimeSpan.FromSeconds(3)).GetAwaiter().GetResult();
             using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(2));
-            SaveAsync(deadline.Token).AsTask().GetAwaiter().GetResult();
+            SaveAsync(deadline.Token, durable: true).AsTask().GetAwaiter().GetResult();
         }
         catch (Exception error) when (error is OperationCanceledException or TimeoutException)
         { Volatile.Write(ref _persistence, "shutdown-timeout"); }
@@ -102,9 +102,9 @@ public sealed class DiagnosticHealthMonitor : IDisposable
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
     }
 
-    private async ValueTask SaveAsync(CancellationToken token)
+    private async ValueTask SaveAsync(CancellationToken token, bool durable = false)
     {
-        string result = await _session.SaveHealthAsync(Capture() with { HealthPersistenceStatus = "ready" }, token).ConfigureAwait(false);
+        string result = await _session.SaveHealthAsync(Capture() with { HealthPersistenceStatus = "ready" }, token, durable).ConfigureAwait(false);
         Volatile.Write(ref _persistence, result);
     }
 }

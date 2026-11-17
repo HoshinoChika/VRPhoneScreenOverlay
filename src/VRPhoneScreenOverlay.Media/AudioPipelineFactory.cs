@@ -7,6 +7,9 @@ public static class AudioPipelineFactory
     public static ValueTask<IAudioSink> CreateDefaultWasapiSinkAsync() =>
         CreateDefaultWasapiSinkCoreAsync();
 
+    public static async ValueTask<IAudioSink> CreateRegulatedWasapiSinkAsync() =>
+        await WasapiAudioSink.CreateAsync(regulateClock: true).ConfigureAwait(false);
+
     private static async ValueTask<IAudioSink> CreateDefaultWasapiSinkCoreAsync() =>
         await WasapiAudioSink.CreateAsync().ConfigureAwait(false);
 }

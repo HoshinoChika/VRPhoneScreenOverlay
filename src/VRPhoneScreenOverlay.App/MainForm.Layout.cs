@@ -105,6 +105,8 @@ internal sealed partial class MainForm
         _bindingGuideView.ControllerSelector.SelectedValueChanged += OnBindingGuideRequested;
 
         _controllerHandSelector = featuresPage.HandSelector;
+        _videoView = videoPage;
+        _uploadModeSelector = videoPage.UploadSelector;
         _resolutionSelector = videoPage.ResolutionSelector;
         _bitrateSelector = videoPage.BitrateSelector;
         _frameRateSelector = videoPage.FrameRateSelector;
@@ -112,6 +114,7 @@ internal sealed partial class MainForm
         _keepAwakeWhileGrabbedToggle = settingsPage.KeepAwakeWhileGrabbedToggle;
         _vrUnlockKeypadToggle = settingsPage.VrUnlockKeypadToggle;
         _settingsView = settingsPage;
+        _settingsView.ButtonResetDisabledToggle.CheckedChanged += OnMotionParametersChanged;
         _discardSettingsButton = videoPage.DiscardButton;
         _applySettingsButton = videoPage.ApplyButton;
         _qualityStatus = videoPage.QualityStatus;

@@ -14,16 +14,16 @@
       "vrphonescreenoverlay.diagnostics": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
-          "VRPhoneScreenOverlay.Network": "[0.2.8, )",
-          "VRPhoneScreenOverlay.Protocols": "[0.2.8, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.3.0, )",
+          "VRPhoneScreenOverlay.Network": "[0.3.0, )",
+          "VRPhoneScreenOverlay.Protocols": "[0.3.0, )"
         }
       },
       "vrphonescreenoverlay.network": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
-          "VRPhoneScreenOverlay.Protocols": "[0.2.8, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.3.0, )",
+          "VRPhoneScreenOverlay.Protocols": "[0.3.0, )"
         }
       },
       "vrphonescreenoverlay.protocols": {
@@ -32,9 +32,9 @@
       "vrphonescreenoverlay.update": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
-          "VRPhoneScreenOverlay.Network": "[0.2.8, )",
-          "VRPhoneScreenOverlay.Protocols": "[0.2.8, )"
+          "VRPhoneScreenOverlay.Contracts": "[0.3.0, )",
+          "VRPhoneScreenOverlay.Network": "[0.3.0, )",
+          "VRPhoneScreenOverlay.Protocols": "[0.3.0, )"
         }
       }
     },

@@ -94,7 +94,7 @@ internal sealed partial class MainForm
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { DetachDisplayEvents(); }
+        if (disposing) { DetachDisplayEvents(); _capturePulseTimer?.Dispose(); }
         base.Dispose(disposing);
     }
 

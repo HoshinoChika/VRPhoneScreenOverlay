@@ -4,9 +4,24 @@ namespace VRPhoneScreenOverlay.App.Views;
 
 public partial class PlayspaceMotionView : UserControl
 {
+    private readonly List<OutsideInputCommit> _inputCommits = [];
+
     public PlayspaceMotionView()
     {
         InitializeComponent();
+        Load += (_, _) =>
+        {
+            if (_inputCommits.Count == 0 && FindForm() is { } form)
+            {
+                foreach (MotionValueControl input in new[] { multiplier, strength, gravity, friction })
+                { _inputCommits.Add(new OutsideInputCommit(form, input)); }
+            }
+        };
+        Disposed += (_, _) =>
+        {
+            foreach (OutsideInputCommit binding in _inputCommits) { binding.Dispose(); }
+            _inputCommits.Clear();
+        };
         multiplierOne.Click += (_, _) => multiplier.Value = 1m;
         multiplierFive.Click += (_, _) => multiplier.Value = 5m;
         multiplierTen.Click += (_, _) => multiplier.Value = 10m;

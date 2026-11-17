@@ -21,7 +21,10 @@ public sealed record PhoneAudioSnapshot(
     long DecodedPackets = 0,
     long DroppedBuffers = 0,
     TimeSpan BufferedDuration = default,
-    string OutputDeviceId = "");
+    string OutputDeviceId = "")
+{
+    public VRPhoneScreenOverlay.Contracts.AudioPlaybackDiagnostic? PlaybackDiagnostic { get; init; }
+}
 
 public sealed class PhoneAudioChangedEventArgs(PhoneAudioSnapshot snapshot) : EventArgs
 {
@@ -44,6 +47,8 @@ public interface IPhoneAudioService : IAsyncDisposable
 public sealed class PhoneAudioService : IPhoneAudioService
 {
     private const int _maximumAutomaticAttempts = 3;
+    private readonly Func<IAudioDecoder> _createDecoder;
+    private readonly Func<ValueTask<IAudioSink>> _createSink;
     private readonly TimeSpan _retryDelay;
     private readonly IAndroidAudioSessionFactory _audioSessions;
     private readonly IAndroidConnectionLogSink _log;
@@ -66,7 +71,21 @@ public sealed class PhoneAudioService : IPhoneAudioService
         IAndroidConnectionLogSink log,
         TimeSpan? startupTimeout = null,
         TimeSpan? retryDelay = null)
+        : this(audioSessions, log, AudioPipelineFactory.CreateOpusDecoder,
+            AudioPipelineFactory.CreateRegulatedWasapiSinkAsync, startupTimeout, retryDelay)
     {
+    }
+
+    internal PhoneAudioService(
+        IAndroidAudioSessionFactory audioSessions,
+        IAndroidConnectionLogSink log,
+        Func<IAudioDecoder> createDecoder,
+        Func<ValueTask<IAudioSink>> createSink,
+        TimeSpan? startupTimeout = null,
+        TimeSpan? retryDelay = null)
+    {
+        _createDecoder = createDecoder ?? throw new ArgumentNullException(nameof(createDecoder));
+        _createSink = createSink ?? throw new ArgumentNullException(nameof(createSink));
         _audioSessions = audioSessions ?? throw new ArgumentNullException(nameof(audioSessions));
         _log = log ?? throw new ArgumentNullException(nameof(log));
         _startupTimeout = startupTimeout ?? TimeSpan.FromSeconds(20);
@@ -323,8 +342,8 @@ public sealed class PhoneAudioService : IPhoneAudioService
                 $"当前音频编码 {session.Codec} 尚未接入播放");
         }
 
-        await using IAudioDecoder decoder = AudioPipelineFactory.CreateOpusDecoder();
-        await using IAudioSink sink = await AudioPipelineFactory.CreateDefaultWasapiSinkAsync()
+        await using IAudioDecoder decoder = _createDecoder();
+        await using IAudioSink sink = await _createSink()
             .ConfigureAwait(false);
         long decodedPackets = 0;
         long droppedBuffers = 0;
@@ -341,13 +360,13 @@ public sealed class PhoneAudioService : IPhoneAudioService
             using DecodedAudioFrame frame = decoder.Decode(
                 item.Payload.Span,
                 item.PresentationTimeMicroseconds ?? 0);
-            if (AudioBufferPolicy.ShouldReset(sink.BufferedDuration))
+            if (AudioBufferPolicy.ShouldReset(sink.BufferedDuration, frame.Duration))
             {
                 sink.Clear();
                 droppedBuffers++;
             }
 
-            await sink.WriteAsync(frame.Samples, cancellationToken).ConfigureAwait(false);
+            await sink.WriteTimestampedAsync(frame.Samples, frame.PresentationTimeMicroseconds, cancellationToken).ConfigureAwait(false);
             decodedPackets++;
             PhoneAudioSnapshot playing = new(
                 PhoneAudioState.Playing,
@@ -356,7 +375,8 @@ public sealed class PhoneAudioService : IPhoneAudioService
                 decodedPackets,
                 droppedBuffers,
                 sink.BufferedDuration,
-                sink.OutputDeviceId);
+                sink.OutputDeviceId)
+            { PlaybackDiagnostic = sink.PlaybackDiagnostic };
             Publish(playing);
             started.TrySetResult();
         }

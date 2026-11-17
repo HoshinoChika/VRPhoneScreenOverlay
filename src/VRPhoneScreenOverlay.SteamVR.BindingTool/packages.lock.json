@@ -109,7 +109,7 @@
         "dependencies": {
           "Concentus": "[2.2.2, )",
           "NAudio": "[3.0.0, )",
-          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Contracts": "[0.3.0, )",
           "Vortice.MediaFoundation": "[3.8.3, )"
         }
       },
@@ -119,9 +119,9 @@
       "vrphonescreenoverlay.steamvr": {
         "type": "Project",
         "dependencies": {
-          "VRPhoneScreenOverlay.Contracts": "[0.2.8, )",
-          "VRPhoneScreenOverlay.Media": "[0.2.8, )",
-          "VRPhoneScreenOverlay.Presentation": "[0.2.8, )",
+          "VRPhoneScreenOverlay.Contracts": "[0.3.0, )",
+          "VRPhoneScreenOverlay.Media": "[0.3.0, )",
+          "VRPhoneScreenOverlay.Presentation": "[0.3.0, )",
           "Vortice.Direct3D11": "[3.8.3, )"
         }
       },

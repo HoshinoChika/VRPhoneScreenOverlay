@@ -49,6 +49,7 @@ public partial class MainShellView : UserControl
         // Reset the destination before showing it, avoiding a transient QR restart.
         if (page is HomePageView home) { home.ShowMainContent(); }
         else if (page is AboutPageView about) { about.ShowMainContent(); }
+        else if (page is SettingsPageView settings) { settings.ReturnFromTranslationSettings(); }
         foreach (Control sibling in pageHost.Controls) { sibling.Visible = ReferenceEquals(sibling, page); }
         foreach (NavigationButton button in new[] { homeNavigation, featuresNavigation, videoNavigation, settingsNavigation, aboutNavigation })
         { button.Selected = ReferenceEquals(button, selectedNavigation); }

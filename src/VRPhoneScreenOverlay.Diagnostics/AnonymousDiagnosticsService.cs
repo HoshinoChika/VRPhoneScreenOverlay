@@ -24,12 +24,13 @@ public sealed record DiagnosticsServiceOptions(
     public string? FailedBundleDirectory { get; init; }
     internal string? OutgoingBundleDirectory { get; init; }
     public Func<DiagnosticRuntimeHealth>? RuntimeHealthProvider { get; init; }
+    public Func<DiagnosticCaptureCoverage>? CaptureCoverageProvider { get; init; }
     public TroubleshootingCredential? TroubleshootingCredential { get; init; }
     public string? InvestigationDirectory { get; init; }
 
     public static DiagnosticsServiceOptions FromConfiguration(ClientServiceConfiguration configuration) => new(
         configuration.DiagnosticsInitUri,
-        24L * 1024 * 1024,
+        DiagnosticTransferLimits.MaximumBundleBytes,
         TimeSpan.FromSeconds(45));
 }
 
@@ -43,6 +44,9 @@ public sealed record DiagnosticUploadContext(
     DiagnosticUserReport UserReport,
     string? CurrentLogPath)
 {
+    public ConsentedMemoryAttachment? MemoryAttachment { get; init; }
+    public DateTimeOffset? CollectionEnd { get; init; }
+    public DiagnosticCaptureCoverage? CaptureCoverage { get; init; }
     internal string? IncidentRoot { get; init; }
     internal DiagnosticRuntimeHealth? RuntimeHealth { get; init; }
     internal string? ComponentRecoveryRoot { get; init; }
@@ -85,6 +89,7 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
         DiagnosticLocalFiles.CreateAsync(context with
         {
             RuntimeHealth = _options.RuntimeHealthProvider?.Invoke() ?? context.RuntimeHealth,
+            CaptureCoverage = _options.CaptureCoverageProvider?.Invoke() ?? context.CaptureCoverage,
             InvestigationDirectory = _options.InvestigationDirectory
         }, progress, cancellationToken);
     private static readonly JsonSerializerOptions _jsonOptions = new()
@@ -95,6 +100,7 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
     };
     private readonly DiagnosticsServiceOptions _options;
     private readonly IAppHttpClient _httpClient;
+    private readonly IAppHttpClient _uploadClient;
     private readonly bool _ownsHttpClient;
     private bool _disposed;
 
@@ -104,19 +110,31 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
             new AppHttpClient(new NetworkClientOptions(
                 "diagnostics-client",
                 (options ?? throw new ArgumentNullException(nameof(options))).RequestTimeout)
-            { UseSystemProxy = false }),
+            { UseSystemProxy = false, AllowAutoRedirect = false }),
             ownsHttpClient: true)
     {
+        _uploadClient = new AppHttpClient(UploadOptions());
+    }
+
+    internal static NetworkClientOptions UploadOptions() => new("diagnostics-upload", TimeSpan.FromMinutes(8), 1)
+    { UseSystemProxy = false, AllowAutoRedirect = false };
+
+    internal static TimeSpan RemainingUploadTime(DateTimeOffset expiresAt, DateTimeOffset now)
+    {
+        TimeSpan remaining = expiresAt - now;
+        if (remaining <= TimeSpan.Zero) { throw new DiagnosticsException(DiagnosticsReasonCodes.UploadPolicyExpired, "诊断上传授权已过期"); }
+        return remaining < TimeSpan.FromMinutes(8) ? remaining : TimeSpan.FromMinutes(8);
     }
 
     public AnonymousDiagnosticsService(
         DiagnosticsServiceOptions options,
         IAppHttpClient httpClient,
-        bool ownsHttpClient)
+        bool ownsHttpClient, IAppHttpClient? uploadClient = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _ownsHttpClient = ownsHttpClient;
+        _uploadClient = uploadClient ?? httpClient;
     }
 
     public async ValueTask<DiagnosticUploadResult> BuildAndUploadAsync(
@@ -129,6 +147,7 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
         context = context with
         {
             RuntimeHealth = _options.RuntimeHealthProvider?.Invoke() ?? context.RuntimeHealth,
+            CaptureCoverage = _options.CaptureCoverageProvider?.Invoke() ?? context.CaptureCoverage,
             InvestigationDirectory = _options.InvestigationDirectory
         };
         string bundlePath;
@@ -237,7 +256,9 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
 
             // The bundle body is a one-shot FileStream and the PUT creates a server-side object,
             // so this must run at most once. NetworkRetryPolicy.None is load bearing here.
-            using HttpResponseMessage uploadResponse = await _httpClient.SendAsync(
+            using CancellationTokenSource uploadDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            uploadDeadline.CancelAfter(RemainingUploadTime(upload.ExpiresAt, DateTimeOffset.UtcNow));
+            using HttpResponseMessage uploadResponse = await _uploadClient.SendAsync(
                     () =>
                     {
                         HttpRequestMessage uploadRequest = new(HttpMethod.Put, uploadUri);
@@ -256,7 +277,7 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
                     NetworkRetryPolicy.None,
                     HttpCompletionOption.ResponseHeadersRead,
                     null,
-                    cancellationToken)
+                    uploadDeadline.Token)
                 .ConfigureAwait(false);
 
             Uri completeUri = new(_options.InitUri, "complete");
@@ -304,6 +325,7 @@ public sealed partial class AnonymousDiagnosticsService : IAnonymousDiagnosticsS
         if (_ownsHttpClient)
         {
             _httpClient.Dispose();
+            if (!ReferenceEquals(_httpClient, _uploadClient)) { _uploadClient.Dispose(); }
         }
     }
 
@@ -387,7 +409,10 @@ internal static class DiagnosticBundleBuilder
     private static async ValueTask<string> WriteBundleAsync(DiagnosticUploadContext context, long maximumBundleBytes,
         IProgress<DiagnosticProgress>? progress, string outputPath, CancellationToken cancellationToken)
     {
-        DateTimeOffset windowEnd = DateTimeOffset.UtcNow;
+        DateTimeOffset windowEnd = context.CollectionEnd ?? context.MemoryAttachment?.WindowEnd ?? DateTimeOffset.UtcNow;
+        if (context.MemoryAttachment?.WindowEnd is { } memoryEnd &&
+            (memoryEnd != windowEnd || context.CollectionWindow != DiagnosticRetentionPolicy.UploadWindow))
+        { throw new IOException("Memory and diagnostic windows differ."); }
         DateTimeOffset windowStart = windowEnd - context.CollectionWindow;
         LogSelection selection = SelectLogFiles(context.CurrentLogPath, windowStart);
         List<LogFileCollection> logResults = [];
@@ -401,14 +426,37 @@ internal static class DiagnosticBundleBuilder
             FileOptions.Asynchronous);
         using (ZipArchive archive = new(output, ZipArchiveMode.Create, leaveOpen: true))
         {
+            if (context.MemoryAttachment is { } memory)
+            {
+                progress?.Report(new("正在附加已同意上传的内存现场", 0, memory.Bytes));
+                await using FileStream source = new(memory.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                string actualHash = Convert.ToHexStringLower(await SHA256.HashDataAsync(source, cancellationToken).ConfigureAwait(false));
+                if (source.Length != memory.Bytes || actualHash != memory.Sha256)
+                { throw new IOException("Approved memory attachment changed."); }
+                source.Position = 0;
+                await using (Stream entry = await archive.CreateEntry("memory/capture.zip", CompressionLevel.NoCompression)
+                    .OpenAsync(cancellationToken).ConfigureAwait(false))
+                { await source.CopyToAsync(entry, cancellationToken).ConfigureAwait(false); }
+                await WriteJsonAsync(archive, "memory/consent.json", new
+                {
+                    schemaVersion = 1,
+                    explicitlyApproved = true,
+                    memory.ConsentedAt,
+                    memory.Bytes,
+                    memory.Sha256,
+                    windowStart,
+                    windowEnd
+                }, cancellationToken).ConfigureAwait(false);
+            }
             await WriteJsonAsync(
                     archive,
                     "incident-summary.json",
-                    IncidentCollector.Collect(context.IncidentRoot, windowStart),
+                    IncidentCollector.Collect(context.IncidentRoot, windowStart, windowEnd),
                     cancellationToken)
                 .ConfigureAwait(false);
             await WriteJsonAsync(archive, "diagnostic-health.json", context.RuntimeHealth,
                     cancellationToken).ConfigureAwait(false);
+            await WriteJsonAsync(archive, "capture-coverage.json", context.CaptureCoverage, cancellationToken).ConfigureAwait(false);
             await WriteJsonAsync(archive, "component-recovery.json", ComponentRecoveryCollector.Collect(context.ComponentRecoveryRoot),
                     cancellationToken).ConfigureAwait(false);
             await WriteJsonAsync(archive, "ai-investigations.json",
@@ -483,6 +531,7 @@ internal static class DiagnosticBundleBuilder
                     windowStart,
                     windowEnd,
                     retentionHours = 24,
+                    memoryIncluded = context.MemoryAttachment is not null,
                     phoneImagesIncluded = false,
                     audioIncluded = false,
                     bindingFilesIncluded = false

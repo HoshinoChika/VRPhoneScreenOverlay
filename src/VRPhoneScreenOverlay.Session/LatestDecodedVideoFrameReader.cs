@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using VRPhoneScreenOverlay.Android;
 using VRPhoneScreenOverlay.Media;
@@ -7,6 +8,10 @@ namespace VRPhoneScreenOverlay.Session;
 internal sealed record DecodedStreamFrame(DecodedVideoFrame Frame, int Generation, int SourceWidth,
     int SourceHeight, string Backend, long? EstimatedCaptureTimestamp) : IDisposable
 {
+    public VRPhoneScreenOverlay.Contracts.VideoClockDiagnostic? Clock { get; init; }
+    public long? ReceivedTimestamp { get; init; }
+    public long? DecodeStartedTimestamp { get; init; }
+    public long OutputReadyTimestamp { get; init; }
     public void Dispose() => Frame.Dispose();
 }
 
@@ -43,7 +48,7 @@ internal sealed class LatestDecodedVideoFrameReader : IAsyncDisposable
     public long SubmittedPackets => Interlocked.Read(ref _submittedPackets);
     public long OmittedTimestamps => Interlocked.Read(ref _omittedTimestamps);
     public long NativeReplacedFrames => Interlocked.Read(ref _nativeReplaced) + (Volatile.Read(ref _active)?.ReplacedOutputFrames ?? 0);
-    public string DiagnosticState => $"{Volatile.Read(ref _active)?.DiagnosticState ?? _lastDiagnostic}; staleOutputs={StaleOutputFrames}";
+    public string DiagnosticState => $"{Volatile.Read(ref _active)?.DiagnosticState ?? _lastDiagnostic}; staleOutputs={StaleOutputFrames}; encodedQueueBytes={_encoded.QueuedPayloadBytes}; peakEncodedQueueBytes={_encoded.PeakQueuedPayloadBytes}; encodedQueueByteOverflows={_encoded.ByteBudgetOverflows}";
 
     public LatestDecodedVideoFrameReader(LatestAndroidVideoFrameReader encoded,
         Func<AndroidLatestVideoFrame, IH264VideoDecoder> create, CancellationToken token, int maximumPackets = 0)
@@ -104,7 +109,7 @@ internal sealed class LatestDecodedVideoFrameReader : IAsyncDisposable
                         handler = output.OnAvailable;
                         decoder.OutputAvailable += handler;
                     }
-                    output!.Remember(packet.PresentationTimeMicroseconds, packet.EstimatedCaptureTimestamp);
+                    output!.Remember(packet.PresentationTimeMicroseconds, packet.EstimatedCaptureTimestamp, packet.ReceivedTimestamp, Stopwatch.GetTimestamp(), packet.Clock);
                     Interlocked.Increment(ref _submittedPackets);
                     DecodedVideoFrame? frame = await decoder!.DecodePacketAsync(packet.Payload,
                         packet.PresentationTimeMicroseconds, packet.IsKeyFrame, token).ConfigureAwait(false);
@@ -205,22 +210,30 @@ internal sealed class LatestDecodedVideoFrameReader : IAsyncDisposable
         int generation, int width, int height)
     {
         // Metadata only: capacity 128, oldest timestamp removed. A miss means latency unavailable.
-        private readonly SortedDictionary<long, long?> _timestamps = [];
+        private readonly SortedDictionary<long, (long? Captured, long? Received, long DecodeStarted, VRPhoneScreenOverlay.Contracts.VideoClockDiagnostic? Clock)> _timestamps = [];
         private readonly object _timestampsGate = new();
-        public void Remember(long pts, long? captured)
+        public void Remember(long pts, long? captured, long? received, long decodeStarted, VRPhoneScreenOverlay.Contracts.VideoClockDiagnostic? clock)
         {
             lock (_timestampsGate)
             {
-                _timestamps[pts] = captured;
+                _timestamps[pts] = (captured, received, decodeStarted, clock);
                 while (_timestamps.Count > 128)
                 { _timestamps.Remove(_timestamps.First().Key); Interlocked.Increment(ref owner._omittedTimestamps); }
             }
         }
         public void Publish(DecodedVideoFrame frame)
         {
-            long? captured;
-            lock (_timestampsGate) { _timestamps.Remove(frame.PresentationTimeMicroseconds, out captured); }
-            owner.Publish(new(frame, generation, width, height, decoder.BackendName, captured));
+            long ready = Stopwatch.GetTimestamp();
+            (long? Captured, long? Received, long DecodeStarted, VRPhoneScreenOverlay.Contracts.VideoClockDiagnostic? Clock) timing;
+            bool found;
+            lock (_timestampsGate) { found = _timestamps.Remove(frame.PresentationTimeMicroseconds, out timing); }
+            owner.Publish(new(frame, generation, width, height, decoder.BackendName, timing.Captured)
+            {
+                Clock = timing.Clock,
+                ReceivedTimestamp = timing.Received,
+                DecodeStartedTimestamp = found ? timing.DecodeStarted : null,
+                OutputReadyTimestamp = ready
+            });
         }
         public void OnAvailable(object? sender, EventArgs args)
         {

@@ -115,6 +115,7 @@ public sealed class AndroidVideoStreamItem : IDisposable
 
     public long? PresentationTimeMicroseconds { get; }
 
+    internal VRPhoneScreenOverlay.Contracts.VideoClockDiagnostic? Clock { get; set; }
     internal long? EstimatedCaptureTimestamp { get; set; }
 
     public bool IsKeyFrame { get; }

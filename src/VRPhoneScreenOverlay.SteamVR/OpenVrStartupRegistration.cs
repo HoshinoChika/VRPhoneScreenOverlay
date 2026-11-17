@@ -11,6 +11,9 @@ public static class OpenVrStartupRegistration
 
     public static async ValueTask<OpenVrBindingResult> ConfigureAsync(bool? enabled, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
+        try { await BindingToolComponents.Current().EnsureAsync(token).ConfigureAwait(false); }
+        catch (BindingToolComponentException error) { return new(false, error.ReasonCode, error.Message); }
         ProcessStartInfo start = new()
         {
             FileName = Path.Combine(AppContext.BaseDirectory, "VRPhoneScreenOverlay.SteamVR.BindingTool.exe"),
@@ -21,12 +24,26 @@ public static class OpenVrStartupRegistration
         };
         start.ArgumentList.Add("configure-startup");
         start.ArgumentList.Add(enabled is null ? "preserve" : enabled.Value ? "enabled" : "disabled");
-        OpenVrBindingResult result = await RunUtilityAsync(start, TimeSpan.FromSeconds(3), token).ConfigureAwait(false);
+        OpenVrBindingResult result = await RunCoordinatedUtilityAsync(start, TimeSpan.FromSeconds(10), token).ConfigureAwait(false);
         return result.StartupDiagnostic is not null ? result : result with
         {
             StartupDiagnostic = new(result.ReasonCode == OpenVrReasonCodes.StartupRegistrationTimeout ? "utility-timeout" : "utility",
                 RequestedAutoLaunch: enabled)
         };
+    }
+
+    internal static async ValueTask<OpenVrBindingResult> RunCoordinatedUtilityAsync(ProcessStartInfo start, TimeSpan timeout, CancellationToken token, Action? beforeStart = null)
+    {
+        token.ThrowIfCancellationRequested();
+        using IDisposable? reservation = OpenVrRuntimeHost.RegistrationGate.TryReserve();
+        if (reservation is null)
+        {
+            return new(false, "OPENVR_STARTUP_BUSY", "SteamVR 连接初始化进行中，登记将稍后重试")
+            { StartupDiagnostic = new("runtime-initialization-busy") };
+        }
+        if (!OpenVrRuntimeAvailability.CanInitializeUtility()) { return OpenVrRuntimeAvailability.NamespaceUnavailable(); }
+        beforeStart?.Invoke();
+        return await RunUtilityAsync(start, timeout, token).ConfigureAwait(false);
     }
 
     internal static async ValueTask<OpenVrBindingResult> RunUtilityAsync(ProcessStartInfo start, TimeSpan timeout, CancellationToken token)
@@ -36,29 +53,54 @@ public static class OpenVrStartupRegistration
         using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(timeout);
         Task<string>? output = null;
+        Task<string>? errors = null;
+        bool started = false;
+        long began = Stopwatch.GetTimestamp();
+        OpenVrBindingResult Finish(OpenVrBindingResult value) => value with
+        {
+            StartupDiagnostic = (value.StartupDiagnostic ?? new(value.ReasonCode == OpenVrReasonCodes.StartupRegistrationTimeout ? "utility-timeout" : "utility-result")) with
+            {
+                HelperProcessId = started ? process.Id : null,
+                ElapsedMilliseconds = Stopwatch.GetElapsedTime(began).TotalMilliseconds,
+                ExitCode = started && process.HasExited ? process.ExitCode : null
+            }
+        };
         try
         {
+            start.RedirectStandardError = true;
             if (!process.Start()) { throw new InvalidOperationException("Registration utility did not start."); }
+            started = true;
             output = ReadBoundedAsync(process.StandardOutput, deadline.Token);
+            errors = ReadBoundedAsync(process.StandardError, deadline.Token);
             await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+            string errorText = await errors.ConfigureAwait(false);
+            if (process.ExitCode != 0 && (errorText.Contains("dependency resolver", StringComparison.OrdinalIgnoreCase) ||
+                errorText.Contains("Failed to parse", StringComparison.OrdinalIgnoreCase) || errorText.Contains("hostpolicy", StringComparison.OrdinalIgnoreCase)))
+            {
+                return Finish(new(false, "BINDING_COMPONENT_HOST_FAILED", "软件绑定辅助组件无法加载，请从官网下载完整安装包修复。")
+                { StartupDiagnostic = new("utility-host-load", NativeError: $"exit=0x{process.ExitCode:X8};category=dependency-loader") });
+            }
             string json = await output.ConfigureAwait(false);
             OpenVrBindingResult? result = JsonSerializer.Deserialize<OpenVrBindingResult>(json);
             if (result is null || string.IsNullOrEmpty(result.ReasonCode) || (process.ExitCode == 0) != result.Succeeded)
             { throw new InvalidDataException("Invalid registration response."); }
-            return result;
+            return Finish(result);
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
-        { return new(false, OpenVrReasonCodes.StartupRegistrationTimeout, "SteamVR连接超时，请检查SteamVR状态和运行权限。"); }
+        { return Finish(new(false, OpenVrReasonCodes.StartupRegistrationTimeout, "SteamVR 连接超时，本次尝试已结束；请检查 SteamVR 状态。")); }
+        catch (Exception error) when (error is InvalidDataException or JsonException)
+        { return Finish(new(false, "BINDING_COMPONENT_HOST_FAILED", "软件绑定辅助组件无法加载，请从官网下载完整安装包修复。")); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or
             System.ComponentModel.Win32Exception or JsonException)
-        { return new(false, OpenVrReasonCodes.StartupRegistrationUnconfirmed, "SteamVR 自动启动设置结果未确认，请检查 SteamVR 状态后重试"); }
+        { return Finish(new(false, OpenVrReasonCodes.StartupRegistrationUnconfirmed, "SteamVR 自动启动设置结果未确认，请检查 SteamVR 状态后重试")); }
         finally
         {
             try
             {
-                if (process.Id != 0 && !process.HasExited)
+                if (started && !process.HasExited)
                 {
-                    process.Kill(entireProcessTree: true);
+                    // OpenVR may have spawned a runtime; never terminate its descendants.
+                    process.Kill(entireProcessTree: false);
                     using CancellationTokenSource cleanup = new(TimeSpan.FromSeconds(1));
                     await process.WaitForExitAsync(cleanup.Token).ConfigureAwait(false);
                 }
@@ -67,6 +109,11 @@ public static class OpenVrStartupRegistration
             if (output is not null)
             {
                 try { await output.ConfigureAwait(false); }
+                catch (Exception error) when (error is OperationCanceledException or IOException or InvalidDataException) { }
+            }
+            if (errors is not null)
+            {
+                try { await errors.ConfigureAwait(false); }
                 catch (Exception error) when (error is OperationCanceledException or IOException or InvalidDataException) { }
             }
         }
@@ -87,6 +134,7 @@ public static class OpenVrStartupRegistration
 
     internal static OpenVrBindingResult ConfigureInUtility(bool? enabled)
     {
+        if (!OpenVrRuntimeAvailability.CanInitializeUtility()) { return OpenVrRuntimeAvailability.NamespaceUnavailable(); }
         lock (OpenVrRuntimeHost.ApiGate)
         {
             bool utilityStarted = false;

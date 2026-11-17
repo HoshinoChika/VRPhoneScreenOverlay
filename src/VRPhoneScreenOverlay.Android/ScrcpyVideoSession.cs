@@ -7,11 +7,12 @@ internal sealed class ScrcpyVideoSession(
     ScrcpyTransportLease transport,
     ScrcpyVideoProtocolReader protocol,
     AndroidVideoClockSynchronizer? videoClock,
+    Func<CancellationToken, ValueTask<AndroidVideoClockSynchronizer?>> synchronize,
     IAndroidConnectionLogSink log) : IAndroidVideoSession
 {
     private readonly ScrcpyTransportLease _transport = transport;
     private readonly ScrcpyVideoProtocolReader _protocol = protocol;
-    private readonly AndroidVideoClockSynchronizer? _videoClock = videoClock;
+    private readonly AndroidVideoClockRecovery _videoClock = new(videoClock, synchronize);
     private readonly IAndroidConnectionLogSink _log = log;
     private long _packetCount;
     private long _payloadBytes;
@@ -46,11 +47,13 @@ internal sealed class ScrcpyVideoSession(
         {
             _packetCount++;
             _payloadBytes += item.Payload.Length;
+            AndroidVideoClockSynchronizer? clock = _videoClock.Current;
             if (item.PresentationTimeMicroseconds is long presentationTime &&
-                _videoClock is not null)
+                clock is not null)
             {
+                item.Clock = clock.Describe(System.Diagnostics.Stopwatch.GetTimestamp());
                 item.EstimatedCaptureTimestamp =
-                    _videoClock.EstimateLocalCaptureTimestamp(presentationTime);
+                    clock.EstimateLocalCaptureTimestamp(presentationTime);
             }
         }
 
@@ -65,7 +68,8 @@ internal sealed class ScrcpyVideoSession(
         }
 
         _disposed = true;
-        await _transport.DisposeAsync().ConfigureAwait(false);
+        try { await _videoClock.DisposeAsync().ConfigureAwait(false); }
+        finally { await _transport.DisposeAsync().ConfigureAwait(false); }
         WriteLog(
             "video_stopped",
             AndroidReasonCodes.VideoStopped,

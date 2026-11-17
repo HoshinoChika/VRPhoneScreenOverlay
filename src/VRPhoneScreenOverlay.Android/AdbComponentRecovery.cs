@@ -260,7 +260,7 @@ internal sealed class AdbComponentRecovery(string location, IAndroidConnectionLo
             {
                 try
                 {
-                    if (!process.HasExited && string.Equals(process.MainModule?.FileName, executable, StringComparison.OrdinalIgnoreCase))
+                    if (!process.HasExited && string.Equals(AdbProcessImage.Read(process.Id), executable, StringComparison.OrdinalIgnoreCase))
                     { throw new IOException("Shared ADB component is in use.", unchecked((int)0x80070020)); }
                 }
                 catch (InvalidOperationException) { }

@@ -49,6 +49,13 @@ internal static class OpenVrPhoneMenuPixels
 
     public static void PaintPanel(byte[] pixels, OpenVrMenuVisual value)
     {
+        PaintPanelContent(pixels, value);
+        RoundedPanelGeometry.Apply(pixels, OpenVrPhoneMenuLayout.Width,
+            value.VideoExpanded || value.MotionExpanded ? OpenVrPhoneMenuLayout.MotionHeight : value.Keypad ? 564 : 500);
+    }
+
+    private static void PaintPanelContent(byte[] pixels, OpenVrMenuVisual value)
+    {
         Array.Clear(pixels);
         if (value.VideoExpanded) { PaintVideo(pixels, value); return; }
         if (value.MotionExpanded) { PaintMotion(pixels, value); return; }
@@ -75,10 +82,11 @@ internal static class OpenVrPhoneMenuPixels
         Toggle(pixels, 312, value.DragEnabled, grouped: true);
         OpenVrPhoneMenuLabels.Draw(pixels, 12, 20, 376);
         Toggle(pixels, 376, value.FlingEnabled, grouped: true);
-        OpenVrUiCanvas.Card(pixels, 20, 440, 320, 42, UiTheme.Surface);
+        OpenVrUiCanvas.Card(pixels, 20, 440, 216, 42, UiTheme.Surface);
         OpenVrMenuIcons.Draw(pixels, OpenVrMenuIcon.Settings, 28, 447, 28);
-        OpenVrPhoneMenuLabels.Draw(pixels, 10, 64, 445);
-        OpenVrMenuIcons.Draw(pixels, OpenVrMenuIcon.ChevronRight, 302, 447, 28);
+        OpenVrPhoneMenuLabels.Draw(pixels, 10, 60, 445);
+        OpenVrUiCanvas.Card(pixels, 244, 440, 96, 42, UiTheme.AccentDark);
+        OpenVrPhoneMenuLabels.DrawCentered(pixels, 31, 292, 461);
         if (value.Keypad)
         {
             OpenVrUiCanvas.Card(pixels, 12, 506, 336, 48, value.KeypadExpanded ? UiTheme.NavigationSelected : UiTheme.SurfaceRaised);

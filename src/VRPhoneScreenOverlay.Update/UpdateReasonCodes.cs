@@ -12,6 +12,11 @@ public static class UpdateReasonCodes
     public const string Downloading = "UPDATE_DOWNLOADING";
     public const string Restarting = "UPDATE_RESTARTING";
     public const string InstallFailed = "UPDATE_INSTALL_FAILED";
+    public const string HistoryCapacityExceeded = "UPDATE_HISTORY_CAPACITY_EXCEEDED";
+    public const string RecoveryUnavailable = "UPDATE_RECOVERY_UNAVAILABLE";
+    public const string ArchiveInvalid = "UPDATE_ARCHIVE_INVALID";
+    public const string ArchiveExpansionTooLarge = "UPDATE_ARCHIVE_EXPANSION_TOO_LARGE";
+    public const string ArchiveContentTruncated = "UPDATE_ARCHIVE_CONTENT_TRUNCATED";
 
     /// <summary><c>UPDATE_ALREADY_CURRENT</c></summary>
     public const string AlreadyCurrent = "UPDATE_ALREADY_CURRENT";
@@ -54,6 +59,9 @@ public static class UpdateReasonCodes
 
     /// <summary><c>UPDATE_PACKAGE_TOO_LARGE</c></summary>
     public const string PackageTooLarge = "UPDATE_PACKAGE_TOO_LARGE";
+
+    /// <summary><c>UPDATE_PACKAGE_EXTRACTION_TIMEOUT</c></summary>
+    public const string PackageExtractionTimeout = "UPDATE_PACKAGE_EXTRACTION_TIMEOUT";
 
     /// <summary><c>UPDATE_PACKAGE_TRUNCATED</c></summary>
     public const string PackageTruncated = "UPDATE_PACKAGE_TRUNCATED";

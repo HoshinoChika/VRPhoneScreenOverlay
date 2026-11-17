@@ -20,8 +20,8 @@ public static class DiagnosticLocalFiles
             "incidents：程序会话、首帧阶段、异常、退出及健康证据，时间线保留24小时。\n" +
             "component-recovery：组件校验/修复的最近证据。\n" +
             "另一个已打开的 logs 文件夹：运行日志及独立关键事件日志，按24小时窗口轮转。\n" +
-            "诊断包包含运行/硬件/设置快照、时间线、错误和恢复信息；不包含手机画面、录音或完整内存。\n" +
-            "当前快照和最近成功配置是背景信息，可能早于时间窗口；日志按事件时间筛选。\n",
+            "普通诊断包包含运行/硬件/设置快照、时间线、错误和恢复信息；默认不包含内存转储。\n" +
+            "只有手动确认上传并选择附带内存后，上传包才加入memory/capture.zip；可能包含敏感内存片段，不自动上报。\n当前快照和最近成功配置是背景信息，可能早于时间窗口；日志按事件时间筛选。\n",
             cancellationToken).ConfigureAwait(false);
         return await DiagnosticBundleBuilder.BuildAsync(context with { CollectionWindow = DiagnosticRetentionPolicy.LocalWindow },
             long.MaxValue, progress, cancellationToken, directory).ConfigureAwait(false);

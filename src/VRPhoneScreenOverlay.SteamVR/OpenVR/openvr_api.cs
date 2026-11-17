@@ -159,7 +159,7 @@ public struct IVRSystem
 	internal _GetArrayTrackedDeviceProperty GetArrayTrackedDeviceProperty;
 
 	[UnmanagedFunctionPointer(CallingConvention.StdCall)]
-	internal delegate uint _GetStringTrackedDeviceProperty(uint unDeviceIndex, ETrackedDeviceProperty prop, System.Text.StringBuilder pchValue, uint unBufferSize, ref ETrackedPropertyError pError);
+	internal delegate uint _GetStringTrackedDeviceProperty(uint unDeviceIndex, ETrackedDeviceProperty prop, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 3)] byte[] pchValue, uint unBufferSize, ref ETrackedPropertyError pError);
 	[MarshalAs(UnmanagedType.FunctionPtr)]
 	internal _GetStringTrackedDeviceProperty GetStringTrackedDeviceProperty;
 
@@ -424,7 +424,7 @@ public struct IVRApplications
 	internal _GetApplicationsErrorNameFromEnum GetApplicationsErrorNameFromEnum;
 
 	[UnmanagedFunctionPointer(CallingConvention.StdCall)]
-	internal delegate uint _GetApplicationPropertyString(IntPtr pchAppKey, EVRApplicationProperty eProperty, System.Text.StringBuilder pchPropertyValueBuffer, uint unPropertyValueBufferLen, ref EVRApplicationError peError);
+	internal delegate uint _GetApplicationPropertyString(IntPtr pchAppKey, EVRApplicationProperty eProperty, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 3)] byte[] pchPropertyValueBuffer, uint unPropertyValueBufferLen, ref EVRApplicationError peError);
 	[MarshalAs(UnmanagedType.FunctionPtr)]
 	internal _GetApplicationPropertyString GetApplicationPropertyString;
 
@@ -1624,7 +1624,7 @@ public struct IVRResources
 	internal _LoadSharedResource LoadSharedResource;
 
 	[UnmanagedFunctionPointer(CallingConvention.StdCall)]
-	internal delegate uint _GetResourceFullPath(IntPtr pchResourceName, IntPtr pchResourceTypeDirectory, System.Text.StringBuilder pchPathBuffer, uint unBufferLen);
+	internal delegate uint _GetResourceFullPath(IntPtr pchResourceName, IntPtr pchResourceTypeDirectory, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 3)] byte[] pchPathBuffer, uint unBufferLen);
 	[MarshalAs(UnmanagedType.FunctionPtr)]
 	internal _GetResourceFullPath GetResourceFullPath;
 
@@ -2174,7 +2174,25 @@ public class CVRSystem
 	}
 	public uint GetStringTrackedDeviceProperty(uint unDeviceIndex,ETrackedDeviceProperty prop,System.Text.StringBuilder pchValue,uint unBufferSize,ref ETrackedPropertyError pError)
 	{
-		uint result = FnTable.GetStringTrackedDeviceProperty(unDeviceIndex,prop,pchValue,unBufferSize,ref pError);
+		// Driver strings are UTF-8, independent of the Windows ANSI code page.
+		if (unBufferSize > 1048576) { throw new ArgumentOutOfRangeException(nameof(unBufferSize)); }
+		byte[] buffer = new byte[(int)unBufferSize];
+		uint result = FnTable.GetStringTrackedDeviceProperty(unDeviceIndex,prop,buffer,unBufferSize,ref pError);
+		pchValue?.Clear();
+		if (pError == ETrackedPropertyError.TrackedProp_Success && result > 0)
+		{
+			if (result > unBufferSize) { pError = ETrackedPropertyError.TrackedProp_BufferTooSmall; }
+			else
+			{
+				int end = Array.IndexOf(buffer, (byte)0, 0, (int)result);
+				if (end < 0) { pError = ETrackedPropertyError.TrackedProp_InvalidOperation; }
+				else
+				{
+					try { pchValue?.Append(new System.Text.UTF8Encoding(false, true).GetString(buffer, 0, end)); }
+					catch (System.Text.DecoderFallbackException) { pError = ETrackedPropertyError.TrackedProp_InvalidOperation; }
+				}
+			}
+		}
 		return result;
 	}
 	public string GetPropErrorNameFromEnum(ETrackedPropertyError error)
@@ -2568,10 +2586,32 @@ public class CVRApplications
 	}
 	public uint GetApplicationPropertyString(string pchAppKey,EVRApplicationProperty eProperty,System.Text.StringBuilder pchPropertyValueBuffer,uint unPropertyValueBufferLen,ref EVRApplicationError peError)
 	{
+		// OpenVR writes UTF-8 bytes, not Windows ANSI characters. StringBuilder's
+		// default marshaller corrupts non-ASCII paths on code pages such as CP936.
+		if (unPropertyValueBufferLen > 1048576) { throw new ArgumentOutOfRangeException(nameof(unPropertyValueBufferLen)); }
+		byte[] buffer = new byte[(int)unPropertyValueBufferLen];
 		IntPtr pchAppKeyUtf8 = Utils.ToUtf8(pchAppKey);
-		uint result = FnTable.GetApplicationPropertyString(pchAppKeyUtf8,eProperty,pchPropertyValueBuffer,unPropertyValueBufferLen,ref peError);
-		Marshal.FreeHGlobal(pchAppKeyUtf8);
-		return result;
+		try
+		{
+			uint result = FnTable.GetApplicationPropertyString(pchAppKeyUtf8,eProperty,buffer,unPropertyValueBufferLen,ref peError);
+			pchPropertyValueBuffer?.Clear();
+			if (peError == EVRApplicationError.None && result > 0)
+			{
+				if (result > unPropertyValueBufferLen) { peError = EVRApplicationError.BufferTooSmall; }
+				else
+				{
+					int end = Array.IndexOf(buffer, (byte)0, 0, (int)result);
+					if (end < 0) { peError = EVRApplicationError.InvalidParameter; }
+					else
+					{
+						try { pchPropertyValueBuffer?.Append(new System.Text.UTF8Encoding(false, true).GetString(buffer, 0, end)); }
+						catch (System.Text.DecoderFallbackException) { peError = EVRApplicationError.InvalidParameter; }
+					}
+				}
+			}
+			return result;
+		}
+		finally { Marshal.FreeHGlobal(pchAppKeyUtf8); }
 	}
 	public bool GetApplicationPropertyBool(string pchAppKey,EVRApplicationProperty eProperty,ref EVRApplicationError peError)
 	{
@@ -4019,12 +4059,28 @@ public class CVRResources
 	}
 	public uint GetResourceFullPath(string pchResourceName,string pchResourceTypeDirectory,System.Text.StringBuilder pchPathBuffer,uint unBufferLen)
 	{
+		// Resource paths may contain non-ANSI installation/driver directory names.
+		if (unBufferLen > 1048576) { throw new ArgumentOutOfRangeException(nameof(unBufferLen)); }
+		byte[] buffer = new byte[(int)unBufferLen];
+		pchPathBuffer?.Clear();
 		IntPtr pchResourceNameUtf8 = Utils.ToUtf8(pchResourceName);
-		IntPtr pchResourceTypeDirectoryUtf8 = Utils.ToUtf8(pchResourceTypeDirectory);
-		uint result = FnTable.GetResourceFullPath(pchResourceNameUtf8,pchResourceTypeDirectoryUtf8,pchPathBuffer,unBufferLen);
-		Marshal.FreeHGlobal(pchResourceNameUtf8);
-		Marshal.FreeHGlobal(pchResourceTypeDirectoryUtf8);
-		return result;
+		IntPtr pchResourceTypeDirectoryUtf8 = IntPtr.Zero;
+		try
+		{
+			pchResourceTypeDirectoryUtf8 = Utils.ToUtf8(pchResourceTypeDirectory);
+			uint result = FnTable.GetResourceFullPath(pchResourceNameUtf8,pchResourceTypeDirectoryUtf8,buffer,unBufferLen);
+			if (result == 0 || result > unBufferLen) { return result; }
+			int end = Array.IndexOf(buffer, (byte)0, 0, (int)result);
+			if (end < 0) { return 0; }
+			try { pchPathBuffer?.Append(new System.Text.UTF8Encoding(false, true).GetString(buffer, 0, end)); }
+			catch (System.Text.DecoderFallbackException) { return 0; }
+			return result;
+		}
+		finally
+		{
+			Marshal.FreeHGlobal(pchResourceNameUtf8);
+			Marshal.FreeHGlobal(pchResourceTypeDirectoryUtf8);
+		}
 	}
 }
 

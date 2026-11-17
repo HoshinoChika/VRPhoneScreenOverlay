@@ -57,6 +57,7 @@ public sealed record AndroidConnectionLogEntry(
     public VideoQualityDiagnostic? VideoQuality { get; init; }
     public int? SamplingIntervalSeconds { get; init; }
     public string? SamplingReason { get; init; }
+    public DiagnosticSamplingWindow? SamplingWindow { get; init; }
 }
 
 public sealed record AndroidScanDiagnostic(int RawDevices, int SupportedDevices, int UsbDevices,

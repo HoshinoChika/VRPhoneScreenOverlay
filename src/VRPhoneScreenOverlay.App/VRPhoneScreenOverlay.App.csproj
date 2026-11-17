@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup Condition="'$(BindingToolRecoveryArchive)' != ''">
+    <EmbeddedResource Include="$(BindingToolRecoveryArchive)" LogicalName="BindingToolRecovery.zip" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="QRCoder" />
@@ -25,6 +28,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Assets\author-douyin.jpg" />
+    <EmbeddedResource Include="Assets\test-qq.png" />
     <EmbeddedResource Include="Assets\github-mark.png" />
     <EmbeddedResource Include="Assets\steam.png" LogicalName="VRPhoneScreenOverlay.App.Assets.steam.png" />
     <EmbeddedResource Include="Assets\steamvr.png" LogicalName="VRPhoneScreenOverlay.App.Assets.steamvr.png" />
@@ -53,9 +57,6 @@
     <Compile Update="Views\OnlinePageView.Designer.cs"><DependentUpon>OnlinePageView.cs</DependentUpon></Compile>
     <EmbeddedResource Update="Views\OnlinePageView.resx"><DependentUpon>OnlinePageView.cs</DependentUpon></EmbeddedResource>
     <Compile Update="Views\AboutPageView.cs"><SubType>UserControl</SubType></Compile>
-    <Compile Update="Views\TroubleshootingPageView.cs"><SubType>UserControl</SubType></Compile>
-    <Compile Update="Views\TroubleshootingPageView.Designer.cs"><DependentUpon>TroubleshootingPageView.cs</DependentUpon></Compile>
-    <EmbeddedResource Update="Views\TroubleshootingPageView.resx"><DependentUpon>TroubleshootingPageView.cs</DependentUpon></EmbeddedResource>
     <Compile Update="Views\AboutPageView.Designer.cs"><DependentUpon>AboutPageView.cs</DependentUpon></Compile>
     <EmbeddedResource Update="Views\AboutPageView.resx"><DependentUpon>AboutPageView.cs</DependentUpon></EmbeddedResource>
   </ItemGroup>
@@ -81,7 +82,11 @@
                    AppHostDestinationPath="$(PublishDir)layout\VRPhoneScreenOverlay.exe"
                    AppBinaryName="app/VRPhoneScreenOverlay.dll"
                    IntermediateAssembly="@(IntermediateAssembly->'%(FullPath)')"
+                   DisableCetCompat="true"
                    WindowsGraphicalUserInterface="true" />
   </Target>
 
+  <ItemGroup>
+    <Content Include="Resources\Launchers\*" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

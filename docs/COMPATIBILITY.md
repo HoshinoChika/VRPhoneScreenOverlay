@@ -2,7 +2,23 @@
 
 本文件区分平台条件、软件仿真和真机验收。品牌名称存在于说明目录不代表该品牌全部型号已通过实际测试；合成数据只用于检查协议解析与行为规则。
 
-## 手机
+## Windows、安装路径与显卡（2026-11-11 内部检查）
+
+当前交付为 Windows x64 自包含包，目标平台为 Windows 10 build 19041 及以上；不将 x86、ARM 原生、Windows 7/8 或缺失媒体组件的精简系统列为已验证环境。
+
+| 环境 | 本轮证据与边界 |
+| --- | --- |
+| Windows 10 22H2 x64，build 19045，简体中文 ACP936 | 本机启动、组件校验、原生 UTF-8 边界、合成 H.264 解码/D3D11 转换通过 |
+| Windows 11 x64 | 已检查版本条件和共有 API；Win11 专属 DWM 外观只在 build 22000 以上调用，仍需真实 Win11 群测 |
+| 英文、空格及符号、中文、日文/重音字符/emoji 的正常本地安装路径 | 实际候选启动、绑定组件检查及七份绑定引用通过；不修改系统代码页 |
+| NVIDIA RTX 5060 Ti（当前机器） | 合成媒体链路通过，不代表头显显示、实际音画同步或所有驱动版本均通过 |
+| AMD、Intel、笔记本双显卡 | 代码保留设备能力检查及解码候选回退；需要独立硬件测试，未宣称历史 AMD/OpenVR 问题已解决 |
+
+超长路径按用户决定不纳入兼容范围。推荐解压到普通本地目录，并从原 Windows 桌面以普通用户运行。Windows N/KN 或删除 Media Foundation 的系统需要相应媒体组件。网络共享安装、异常重解析路径、虚拟显示环境和不同权限等级的 SteamVR 不等同于普通本地运行。
+
+以上是本软件的检查边界，不等同于微软对每个 Windows 版本的服务支持承诺；参见 [.NET 10 平台支持](https://github.com/dotnet/core/blob/main/release-notes/10.0/supported-os.md)及 [DWM 圆角最低版本](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwm_window_corner_preference)。
+
+## 手机平台条件
 
 | 条件 | 能力边界 |
 | --- | --- |

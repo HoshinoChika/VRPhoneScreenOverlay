@@ -3,6 +3,8 @@ using VRPhoneScreenOverlay.Contracts;
 
 namespace VRPhoneScreenOverlay.Diagnostics;
 
+public sealed record IncidentShutdownIntent(string SessionId, int ProcessId, long ProcessStartTicks, long RequestedTick);
+
 public sealed record IncidentEntry(long Sequence, DateTimeOffset RecordedAt, IncidentCheckpoint Checkpoint);
 public sealed record IncidentTimelineEntry(DateTimeOffset Timestamp, string Kind, IncidentCheckpoint? Checkpoint = null, IncidentFailure? Failure = null);
 
@@ -11,6 +13,7 @@ public sealed record IncidentState(
     string Build, DateTimeOffset StartedAt, bool CleanShutdown, string MonitorStatus,
     long DiscardedCheckpoints, IncidentEntry[] Checkpoints)
 {
+    public bool AutomaticCapture { get; init; }
     public IncidentEnvironment? Environment { get; init; }
     public long StorageFailures { get; init; }
     public DiagnosticRuntimeHealth? HealthAtCheckpoint { get; init; }
@@ -19,7 +22,12 @@ public sealed record IncidentState(
 public sealed record IncidentDisplayDriver(string? Description, string? Version, string? Provider);
 public sealed record IncidentEnvironment(string OperatingSystem, string OsArchitecture,
     string ProcessArchitecture, string Framework, int LogicalProcessors,
-    string DisplayDriverStatus, bool DriversTruncated, IncidentDisplayDriver[] DisplayDrivers);
+    string DisplayDriverStatus, bool DriversTruncated, IncidentDisplayDriver[] DisplayDrivers)
+{
+    public IncidentRuntimeProcess[] SteamVrProcesses { get; init; } = [];
+    public string SteamVrBranch { get; init; } = "not-collected";
+}
+public sealed record IncidentRuntimeProcess(string Name, string Status, string? FileVersion);
 
 public sealed record IncidentFailure(
     DateTimeOffset RecordedAt, string Kind, string ExceptionType, int HResult,
@@ -61,7 +69,11 @@ public sealed record IncidentReport(string SessionId, string CollectionStatus,
     IncidentFailureHistory? FailureHistory = null,
     DiagnosticRuntimeHealth? Health = null,
     IncidentObserverHealth? Observer = null,
-    string ObserverStatus = "not-collected");
+    string ObserverStatus = "not-collected")
+{
+    public FlightRecord? Flight { get; init; }
+    public FlightRecord? FirstFailureFlight { get; init; }
+}
 
 public sealed record IncidentCrashEvent(DateTimeOffset RecordedAt, string Module, string ExceptionCode, string FaultOffset);
 
@@ -79,6 +91,10 @@ public sealed record IncidentCollectionReport(int SchemaVersion, string Status,
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
 [JsonSerializable(typeof(IncidentState))]
+[JsonSerializable(typeof(IncidentShutdownIntent))]
+[JsonSerializable(typeof(DiagnosticCaptureRecord))]
+[JsonSerializable(typeof(MemoryWindowManifest))]
+[JsonSerializable(typeof(CaptureRunCoverage))]
 [JsonSerializable(typeof(IncidentTimelineEntry))]
 [JsonSerializable(typeof(IncidentFailure))]
 [JsonSerializable(typeof(IncidentFailureHistory))]

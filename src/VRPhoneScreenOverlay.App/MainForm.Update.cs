@@ -26,7 +26,9 @@ internal sealed partial class MainForm
                 Views.MainShellView shell = Controls.OfType<Views.MainShellView>().Single();
                 shell.ShowMainPage(_aboutPage, shell.AboutNavigation);
                 SetControlText(_aboutOperationStatus,
-                    "更新未完成，原版本已保留。请退出其他正在连接手机的软件后重试。");
+                    _updateRestartBlockedReason is UpdateReasonCodes.RecoveryUnavailable or UpdateReasonCodes.HistoryCapacityExceeded or UpdateReasonCodes.InstallFailed
+                        ? UserFacingErrorMessages.FromReason(_updateRestartBlockedReason, string.Empty)
+                        : "更新未完成，原版本已保留。请退出其他正在连接手机的软件后重试。");
                 SetControlForeColor(_aboutOperationStatus, UiPalette.Warning);
                 return;
             }

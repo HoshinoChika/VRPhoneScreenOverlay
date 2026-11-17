@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
     <ProjectReference Include="..\VRPhoneScreenOverlay.Settings\VRPhoneScreenOverlay.Settings.csproj" />
     <ProjectReference Include="..\VRPhoneScreenOverlay.Android\VRPhoneScreenOverlay.Android.csproj" />
     <ProjectReference Include="..\VRPhoneScreenOverlay.Contracts\VRPhoneScreenOverlay.Contracts.csproj" />

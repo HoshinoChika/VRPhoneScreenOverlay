@@ -1,3 +1,4 @@
+using VRPhoneScreenOverlay.Contracts;
 using System.Diagnostics;
 using System.Globalization;
 
@@ -14,6 +15,13 @@ internal sealed class AndroidVideoClockSynchronizer(
 
     public TimeSpan RoundTripDuration { get; } = roundTripDuration;
 
+    internal VideoClockDiagnostic? Describe(long now)
+    {
+        if (now < _localTimestamp || RoundTripDuration < TimeSpan.Zero || RoundTripDuration > _maximumRoundTripDuration) { return null; }
+        double age = ((double)now - _localTimestamp) * 1000 / Stopwatch.Frequency;
+        return double.IsFinite(age) ? new(RoundTripDuration.TotalMilliseconds, age) : null;
+    }
+
     public long? EstimateLocalCaptureTimestamp(long presentationTimeMicroseconds)
     {
         if (presentationTimeMicroseconds <= 0 ||
@@ -23,12 +31,12 @@ internal sealed class AndroidVideoClockSynchronizer(
             return null;
         }
 
-        double deltaTicks = (presentationTimeMicroseconds - _deviceMonotonicMicroseconds) *
+        double deltaTicks = ((double)presentationTimeMicroseconds - _deviceMonotonicMicroseconds) *
             (double)Stopwatch.Frequency / 1_000_000d;
         double estimatedTimestamp = _localTimestamp + deltaTicks;
         if (!double.IsFinite(estimatedTimestamp) ||
             estimatedTimestamp < long.MinValue ||
-            estimatedTimestamp > long.MaxValue)
+            estimatedTimestamp >= (double)long.MaxValue)
         {
             return null;
         }
@@ -43,7 +51,7 @@ internal sealed class AndroidVideoClockSynchronizer(
         out AndroidVideoClockSynchronizer? synchronizer)
     {
         synchronizer = null;
-        if (commandCompletedTimestamp < commandStartedTimestamp)
+        if (commandStartedTimestamp < 0 || commandCompletedTimestamp < commandStartedTimestamp)
         {
             return false;
         }
@@ -55,22 +63,26 @@ internal sealed class AndroidVideoClockSynchronizer(
                 out double monotonicSeconds) ||
             !double.IsFinite(monotonicSeconds) ||
             monotonicSeconds <= 0 ||
-            monotonicSeconds > long.MaxValue / 1_000_000d)
+            monotonicSeconds >= (double)long.MaxValue / 1_000_000d)
         {
             return false;
         }
+
+        double deviceMicroseconds = Math.Round(monotonicSeconds * 1_000_000d, MidpointRounding.AwayFromZero);
+        // Int64.MaxValue rounds up to 2^63 as a double, so the upper bound must
+        // be exclusive after rounding as well as before multiplying.
+        if (deviceMicroseconds < 1 || deviceMicroseconds >= (double)long.MaxValue) { return false; }
 
         long midpointTimestamp = commandStartedTimestamp +
             ((commandCompletedTimestamp - commandStartedTimestamp) / 2);
         TimeSpan roundTripDuration = Stopwatch.GetElapsedTime(
             commandStartedTimestamp,
             commandCompletedTimestamp);
+        if (roundTripDuration > _maximumRoundTripDuration) { return false; }
         synchronizer = new AndroidVideoClockSynchronizer(
             midpointTimestamp,
-            checked((long)Math.Round(
-                monotonicSeconds * 1_000_000d,
-                MidpointRounding.AwayFromZero)),
+            checked((long)deviceMicroseconds),
             roundTripDuration);
-        return roundTripDuration <= _maximumRoundTripDuration;
+        return true;
     }
 }

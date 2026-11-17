@@ -236,7 +236,7 @@ public sealed class OpenVrPlayspaceDragService(
                 exception is InvalidOperationException or DllNotFoundException or
                     EntryPointNotFoundException or BadImageFormatException)
             {
-                if (!_enabled || !_runtimeAvailable())
+                if (exception is not BindingToolComponentException && (!_enabled || !_runtimeAvailable()))
                 {
                     PublishWaiting();
                     _stopSignal.Wait(TimeSpan.FromSeconds(3));
@@ -246,8 +246,8 @@ public sealed class OpenVrPlayspaceDragService(
                     OpenVrPlayspaceDragState.Faulted,
                     _enabled,
                     Volatile.Read(ref _multiplier),
-                    OpenVrReasonCodes.PlayspaceDragSteamvrUnavailable,
-                    "SteamVR 独立空间拖拽暂不可用，正在重试"));
+                    exception is BindingToolComponentException component ? component.ReasonCode : OpenVrReasonCodes.PlayspaceDragSteamvrUnavailable,
+                    exception is BindingToolComponentException ? exception.Message : "SteamVR 独立空间拖拽暂不可用，正在重试"));
                 _stopSignal.Wait(TimeSpan.FromSeconds(3));
             }
         }
@@ -467,6 +467,7 @@ public sealed class OpenVrPlayspaceDragService(
                     OpenVrPlayspaceMotionConfiguration motion = Volatile.Read(ref _motionConfiguration);
                     bool motionAllowed = !events.BindingChanging && !events.RoomSetupActive && !dashboardInput.Suppressed && inputCurrent && hmdTracked;
                     if (!motionAllowed) { controller.Suspend(); }
+                    bool menuReset = (advance || !motionAllowed) && OpenVrRuntimeHost.ActionUpdates.TakeReset();
                     OpenVrPlayspaceDragUpdate update = !advance ? default : controller.Update(
                         dragPressed,
                         resetPressed,
@@ -475,7 +476,8 @@ public sealed class OpenVrPlayspaceDragService(
                         motion.Options,
                         motion.Enabled && _enabled,
                         seconds,
-                        motionAllowed);
+                        motionAllowed,
+                        menuReset);
                     if (update.HeightResetRequested)
                     {
                         string reason = update.HeightResetSucceeded
@@ -557,6 +559,7 @@ public sealed class OpenVrPlayspaceDragService(
         }
         finally
         {
+            _ = OpenVrRuntimeHost.ActionUpdates.TakeReset();
             lock (OpenVrRuntimeHost.ApiGate)
             {
                 controller?.Restore();

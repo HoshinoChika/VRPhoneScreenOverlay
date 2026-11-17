@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\VRPhoneScreenOverlay.Contracts\VRPhoneScreenOverlay.Contracts.csproj" />
@@ -7,7 +7,7 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PlatformTarget>x64</PlatformTarget>
@@ -19,8 +19,8 @@
     <TrimMode>full</TrimMode>
     <SelfContained>true</SelfContained>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <StripSymbols>true</StripSymbols>
-    <DebugType>none</DebugType>
+    <StripSymbols>false</StripSymbols>
+    <DebugType>portable</DebugType>
   </PropertyGroup>
 
 </Project>

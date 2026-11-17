@@ -4,13 +4,14 @@ namespace VRPhoneScreenOverlay.SteamVR;
 
 internal static class OpenVrRuntimeHost
 {
-    private static readonly object _gate = new();
+    internal static OpenVrRegistrationGate RegistrationGate { get; } = new();
+    private static object Gate => RegistrationGate.SyncRoot;
     private static readonly OpenVrActionUpdateCoordinator _actionUpdates = new();
     private static readonly OpenVrRuntimeEvents _events = new();
     private static CVRSystem? _system;
     private static bool _actionManifestSubmitted;
 
-    internal static object ApiGate => _gate;
+    internal static object ApiGate => Gate;
     internal static CVRSystem? CurrentSystem => _system;
 
     internal static OpenVrActionUpdateCoordinator ActionUpdates => _actionUpdates;
@@ -26,7 +27,7 @@ internal static class OpenVrRuntimeHost
 
     public static CVRSystem GetOrStart(ref EVRInitError initializationError)
     {
-        lock (_gate)
+        lock (Gate)
         {
             if (_system is not null)
             {
@@ -34,11 +35,23 @@ internal static class OpenVrRuntimeHost
                 return _system;
             }
 
+            if (RegistrationGate.Active)
+            {
+                initializationError = EVRInitError.IPC_NamespaceUnavailable;
+                return null!;
+            }
+
             // Overlay initialization may launch SteamVR. Never invoke it while the
             // runtime is absent; the existing worker retries after SteamVR starts.
-            if (!OpenVrRuntimeAvailability.IsRunning() || !OpenVrRuntimeAvailability.IsNamespaceAvailable())
+            if (!OpenVrRuntimeAvailability.IsRunning())
             {
                 initializationError = EVRInitError.Init_NoServerForBackgroundApp;
+                return null!;
+            }
+
+            if (!OpenVrRuntimeAvailability.IsNamespaceAvailable())
+            {
+                initializationError = EVRInitError.IPC_NamespaceUnavailable;
                 return null!;
             }
 
@@ -56,13 +69,14 @@ internal static class OpenVrRuntimeHost
 
     public static EVRInputError EnsureActionManifestSubmitted()
     {
-        lock (_gate)
+        lock (Gate)
         {
             if (_actionManifestSubmitted)
             {
                 return EVRInputError.None;
             }
 
+            if (RegistrationGate.Active) { return EVRInputError.InvalidHandle; }
             EVRInputError error = OpenVrInputManifest.RegisterAndSubmit();
             if (error is EVRInputError.None or EVRInputError.IPCError)
             {
@@ -78,7 +92,7 @@ internal static class OpenVrRuntimeHost
 
     public static void Shutdown()
     {
-        lock (_gate)
+        lock (Gate)
         {
             if (_system is null)
             {

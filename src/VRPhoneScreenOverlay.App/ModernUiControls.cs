@@ -859,6 +859,8 @@ public sealed class ModernDateTimeInput : UserControl
             ShortcutsEnabled = true,
             TextAlign = HorizontalAlignment.Left,
         };
+        TextInputGuard.Attach(_editor, text => text.Length <= UiInputPolicy.DateTimeFormat.Length &&
+            text.All(character => char.IsAsciiDigit(character) || character is '-' or ':' or ' '));
         _editor.Enter += OnEditorEnter;
         _editor.Leave += OnEditorLeave;
         _editor.KeyDown += OnEditorKeyDown;
@@ -1003,7 +1005,7 @@ public sealed class ModernDateTimeInput : UserControl
         }
     }
 
-    private void CommitText()
+    internal void CommitText()
     {
         if (UiInputPolicy.TryParseDateTime(
                 _editor.Text,

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 
 namespace VRPhoneScreenOverlay.Android;
@@ -5,6 +6,10 @@ namespace VRPhoneScreenOverlay.Android;
 public sealed class LatestAndroidVideoFrameReader : IAsyncDisposable
 {
     private const int _encodedFrameCapacity = 32;
+    public const long EncodedByteCapacity = 64L * 1024 * 1024;
+    private long _queuedPayloadBytes;
+    private long _peakQueuedPayloadBytes;
+    private long _byteBudgetOverflows;
     private readonly IAndroidVideoSession _session;
     private readonly CancellationTokenSource _stopSource;
     private readonly SemaphoreSlim _available = new(0, 1);
@@ -26,6 +31,10 @@ public sealed class LatestAndroidVideoFrameReader : IAsyncDisposable
         _producer = Task.Run(() => ProduceAsync(_stopSource.Token), CancellationToken.None);
     }
 
+    public long QueuedPayloadBytes => Volatile.Read(ref _queuedPayloadBytes);
+    public long PeakQueuedPayloadBytes => Volatile.Read(ref _peakQueuedPayloadBytes);
+    public long ByteBudgetOverflows => Volatile.Read(ref _byteBudgetOverflows);
+
     public long DroppedFrames => Interlocked.Read(ref _droppedFrames);
 
     public long EncodedPayloadBytes => Interlocked.Read(ref _encodedPayloadBytes);
@@ -45,6 +54,7 @@ public sealed class LatestAndroidVideoFrameReader : IAsyncDisposable
                 if (_frames.Count > 0)
                 {
                     frame = _frames.Dequeue();
+                    _queuedPayloadBytes -= frame.Payload.Length;
                     if (_frames.Count > 0 || _completed || _failure is not null)
                     {
                         SignalAvailable();
@@ -108,6 +118,7 @@ public sealed class LatestAndroidVideoFrameReader : IAsyncDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 AndroidVideoStreamItem item = await _session.ReadNextAsync(cancellationToken)
                     .ConfigureAwait(false);
+                long receivedAt = Stopwatch.GetTimestamp();
                 if (item.Kind == AndroidVideoStreamItemKind.Session)
                 {
                     width = item.Width;
@@ -155,7 +166,7 @@ public sealed class LatestAndroidVideoFrameReader : IAsyncDisposable
 
                 try
                 {
-                    if (!TryEnqueue(item, width, height, configuration, ref generation))
+                    if (!TryEnqueue(item, width, height, configuration, ref generation, receivedAt))
                     {
                         waitingForKeyFrame = true;
                         resynchronizing = true;
@@ -188,18 +199,20 @@ public sealed class LatestAndroidVideoFrameReader : IAsyncDisposable
         }
     }
 
-    // Owns each accepted packet. Capacity is 32 encoded frames; overflow discards
+    // Owns each accepted packet. Capacity is 32 frames AND 64 MiB of encoded payload; overflow discards
     // the old dependency chain. A keyframe at the boundary can restart immediately.
     private bool TryEnqueue(AndroidVideoStreamItem item, int width, int height,
-        byte[] configuration, ref int generation)
+        byte[] configuration, ref int generation, long receivedAt)
     {
         lock (_gate)
         {
-            if (_frames.Count >= _encodedFrameCapacity)
+            bool byteOverflow = item.Payload.Length > EncodedByteCapacity - _queuedPayloadBytes;
+            if (_frames.Count >= _encodedFrameCapacity || byteOverflow)
             {
+                if (byteOverflow) { _byteBudgetOverflows++; }
                 int dropped = _frames.Count;
                 ClearFrames();
-                if (!item.IsKeyFrame)
+                if (!item.IsKeyFrame || item.Payload.Length > EncodedByteCapacity)
                 {
                     item.Dispose();
                     Interlocked.Add(ref _droppedFrames, dropped + 1);
@@ -210,8 +223,10 @@ public sealed class LatestAndroidVideoFrameReader : IAsyncDisposable
             }
 
 #pragma warning disable CA2000 // Ownership transfers to the bounded queue and then the consumer.
-            _frames.Enqueue(new AndroidLatestVideoFrame(generation, width, height, configuration, item));
+            _frames.Enqueue(new AndroidLatestVideoFrame(generation, width, height, configuration, item) { ReceivedTimestamp = receivedAt });
 #pragma warning restore CA2000
+            _queuedPayloadBytes += item.Payload.Length;
+            _peakQueuedPayloadBytes = Math.Max(_peakQueuedPayloadBytes, _queuedPayloadBytes);
             SignalAvailable();
             return true;
         }
@@ -221,6 +236,7 @@ public sealed class LatestAndroidVideoFrameReader : IAsyncDisposable
     {
         while (_frames.TryDequeue(out AndroidLatestVideoFrame? frame))
         {
+            _queuedPayloadBytes -= frame.Payload.Length;
             frame.Dispose();
         }
     }
@@ -243,6 +259,8 @@ public sealed class AndroidLatestVideoFrame(
 {
     private AndroidVideoStreamItem? _item = item;
 
+    public long? ReceivedTimestamp { get; init; }
+
     public int Generation { get; } = generation;
 
     public int Width { get; } = width;
@@ -254,6 +272,8 @@ public sealed class AndroidLatestVideoFrame(
     public long PresentationTimeMicroseconds =>
         (_item ?? throw new ObjectDisposedException(nameof(AndroidLatestVideoFrame)))
         .PresentationTimeMicroseconds ?? 0;
+
+    public VRPhoneScreenOverlay.Contracts.VideoClockDiagnostic? Clock => (_item ?? throw new ObjectDisposedException(nameof(AndroidLatestVideoFrame))).Clock;
 
     public long? EstimatedCaptureTimestamp =>
         (_item ?? throw new ObjectDisposedException(nameof(AndroidLatestVideoFrame)))

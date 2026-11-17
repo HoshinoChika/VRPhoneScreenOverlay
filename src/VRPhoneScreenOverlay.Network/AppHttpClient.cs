@@ -169,11 +169,19 @@ public sealed class AppHttpClient : IAppHttpClient
         }
     }
 
+    internal static SocketsHttpHandler CreateHandler(NetworkClientOptions options) => new()
+    {
+        UseProxy = options.UseSystemProxy,
+        AllowAutoRedirect = options.AllowAutoRedirect,
+        // Refresh connections (and DNS resolution) without interrupting active bodies.
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+    };
+
     private static HttpClient CreateConfiguredClient(NetworkClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
-        HttpClientHandler? handler = new() { UseProxy = options.UseSystemProxy, AllowAutoRedirect = options.AllowAutoRedirect };
+        SocketsHttpHandler? handler = CreateHandler(options);
         HttpClient? client = null;
         try
         {

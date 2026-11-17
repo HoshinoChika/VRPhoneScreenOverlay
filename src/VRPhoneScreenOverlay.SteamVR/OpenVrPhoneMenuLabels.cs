@@ -42,7 +42,7 @@ internal static class OpenVrPhoneMenuLabels
     {
         using Stream stream = typeof(OpenVrPhoneMenuLabels).Assembly.GetManifestResourceStream(
             "VRPhoneScreenOverlay.SteamVR.PhoneMenuLabels") ?? throw new InvalidOperationException("Menu label resource missing.");
-        byte[] alpha = new byte[_width * _height * 31];
+        byte[] alpha = new byte[_width * _height * 32];
         stream.ReadExactly(alpha);
         return alpha;
     }

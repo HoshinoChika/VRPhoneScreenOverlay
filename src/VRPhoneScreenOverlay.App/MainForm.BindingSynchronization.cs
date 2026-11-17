@@ -4,15 +4,42 @@ namespace VRPhoneScreenOverlay.App;
 
 internal sealed partial class MainForm
 {
+    private string? _startupOperationMessage;
+    private void OnSteamVrStartupStateChanged(object? sender, SteamVrStartupChangedEventArgs args)
+    {
+        if (_notifications.Dispatch(nameof(OnSteamVrStartupStateChanged), () => OnSteamVrStartupStateChanged(sender, args))) { return; }
+        if (IsDisposed || Disposing || _startupService is null) { return; }
+        SteamVrStartupStatus current = _startupService.Snapshot;
+        var previous = _startupSteamVrWarning;
+        bool registrationOwnsWarning = previous is null || previous == _lastStartupRegistration;
+        _startupSteamVrWarning = SteamVrStartupPresentation.ResolveWarning(previous, _lastStartupRegistration, current);
+        _lastStartupRegistration = registrationOwnsWarning && _startupSteamVrWarning is not null
+            ? _startupSteamVrWarning : current.Registration;
+        if (current.Registration.Succeeded && !current.Pending)
+        {
+            if (_startupOperationMessage is not null && _operationStatus.Text == _startupOperationMessage)
+            {
+                _operationStatus.Text = string.Empty;
+                _operationStatus.ForeColor = UiPalette.TextSecondary;
+            }
+            _startupOperationMessage = null;
+        }
+        if (_startupOperationMessage is not null && _operationStatus.Text == _startupOperationMessage && current.Attempts > 0)
+        {
+            var presentation = SteamVrStartupPresentation.Read(current);
+            _startupOperationMessage = presentation.Text;
+            _operationStatus.Text = presentation.Text;
+            _operationStatus.ForeColor = presentation.Warning ? UiPalette.Warning : UiPalette.TextSecondary;
+        }
+        _settingsView.ApplyStartupStatus(SteamVrStartupPresentation.Read(current));
+        UpdateSteamVrBindingNotice(_phoneOverlay.Snapshot);
+        UpdateOverlayDashboard(_phoneOverlay.Snapshot);
+        UpdatePhoneOverlayButton();
+    }
+
     private void OnBindingSynchronizationChanged(object? sender, BindingSynchronizationChangedEventArgs args)
     {
-        if (IsDisposed || Disposing || !IsHandleCreated) { return; }
-        if (InvokeRequired)
-        {
-            try { BeginInvoke(() => OnBindingSynchronizationChanged(sender, args)); }
-            catch (InvalidOperationException) when (IsDisposed || Disposing) { }
-            return;
-        }
+        if (_notifications.Dispatch(nameof(OnBindingSynchronizationChanged), () => OnBindingSynchronizationChanged(sender, args))) { return; }
         ShowBindingSynchronizationStatus();
         if (args.Snapshot.State == BindingSynchronizationState.Applied)
         { OnBindingGuideRequested(sender, EventArgs.Empty); }
@@ -20,8 +47,18 @@ internal sealed partial class MainForm
 
     private void OnSteamVrStartupWarningShown(object? sender, EventArgs args)
     {
-        if (_startupSteamVrWarning is not { } warning) { return; }
-        _operationStatus.Text = UserFacingErrorMessages.FromReason(warning.ReasonCode, warning.Message);
+        if (_startupSteamVrWarning is not { } warning)
+        {
+            if (_startupService?.Snapshot is { Attempts: 0, Pending: true })
+            {
+                _startupOperationMessage = SteamVrStartupPresentation.Registering;
+                _operationStatus.Text = _startupOperationMessage;
+                _operationStatus.ForeColor = UiPalette.TextSecondary;
+            }
+            return;
+        }
+        _startupOperationMessage = UserFacingErrorMessages.FromReason(warning.ReasonCode, warning.Message);
+        _operationStatus.Text = _startupOperationMessage;
         _operationStatus.ForeColor = UiPalette.Danger;
     }
 

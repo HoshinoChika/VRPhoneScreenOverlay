@@ -59,6 +59,12 @@ internal sealed class UiScaleLayout : IDisposable
                 _controls[index].Control.ResumeLayout(true);
                 _controls[index].Control.Invalidate();
             }
+            foreach (Baseline item in _controls)
+            {
+                if (item.Control is VideoUploadModeSelectorControl upload) { upload.ArrangeHelpIcons(); }
+                else if (item.Control is AboutPageView about) { about.ApplyScrollLayout(scale); }
+                else if (item.Control is SettingsPageView settings) { settings.ApplyStatusLayout(); }
+            }
             foreach (Font font in _fonts.Values) { font.Dispose(); }
             _fonts = replacement;
         }

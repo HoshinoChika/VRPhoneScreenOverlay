@@ -1,0 +1,6 @@
+Woven SFX: camera-shutter-1-shot
+Source: https://www.woven.video/sfx/camera-shutter-sound-effect
+Download: https://assets.sfx.woven.video/sfx/camera-shutter-1-shot.wav
+CC0 1.0: https://creativecommons.org/publicdomain/zero/1.0/
+Downloaded 2026-11-10; source SHA256 a34e1c2447eef7322016445478777c255fab98a3aa0aa0b287918d796384c69f
+Converted to 48 kHz stereo signed 16-bit LE PCM, gain 0.4.

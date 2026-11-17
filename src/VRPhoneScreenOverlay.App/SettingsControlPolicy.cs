@@ -9,6 +9,7 @@ internal static class SettingsControlPolicy
         VideoResolutionPercent = draft.VideoResolutionPercent,
         VideoBitrateMbps = draft.VideoBitrateMbps,
         VideoMaximumFramesPerSecond = draft.VideoMaximumFramesPerSecond,
+        VideoUploadMode = draft.VideoUploadMode,
     };
     public static bool CanUseResolutionSelector(
         bool generalOperationInProgress,

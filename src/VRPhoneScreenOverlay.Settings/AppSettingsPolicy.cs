@@ -16,6 +16,7 @@ public static class AppSettingsPolicy
         return settings with
         {
             SchemaVersion = AppSettings.CurrentSchemaVersion,
+            VideoUploadMode = settings.VideoUploadMode is "auto" or "staging" or "direct" ? settings.VideoUploadMode : "auto",
             ControllerHand = Enum.IsDefined(settings.ControllerHand)
                 ? settings.ControllerHand
                 : defaults.ControllerHand,

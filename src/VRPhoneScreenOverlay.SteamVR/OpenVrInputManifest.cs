@@ -30,7 +30,9 @@ internal static class OpenVrInputManifest
     public static EVRInputError RegisterAndSubmit()
     {
         (string applicationManifest, string actionManifest) = ResolveFiles();
-        RegisterApplicationManifest(applicationManifest);
+        var registration = OpenVrApplicationRegistration.Apply(applicationManifest, null,
+            new OpenVrApplicationRegistry(), runtimeOnly: true);
+        if (registration.Stage != "confirmed") { throw new OpenVrApplicationRegistrationException(registration); }
         return OpenVR.Input.SetActionManifestPath(actionManifest);
     }
 

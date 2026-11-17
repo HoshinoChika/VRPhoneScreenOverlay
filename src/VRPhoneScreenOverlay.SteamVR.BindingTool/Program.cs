@@ -18,7 +18,9 @@ internal static class Program
         }
         if (args.Length == 2 && args[0] == "enrich-local-binding" && args[1] is "left" or "right")
         {
-            return OpenVrBindingSettingsCleaner.EnrichLocalBinding(args[1] == "left" ? OpenVrControllerHand.Left : OpenVrControllerHand.Right).Succeeded ? 0 : 1;
+            OpenVrBindingResult enriched = OpenVrBindingSettingsCleaner.EnrichLocalBinding(args[1] == "left" ? OpenVrControllerHand.Left : OpenVrControllerHand.Right);
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(enriched));
+            return enriched.Succeeded ? 0 : 1;
         }
         if (args.Length != 1 ||
             !string.Equals(args[0], "activate-local-binding", StringComparison.Ordinal))
@@ -27,6 +29,7 @@ internal static class Program
         }
 
         OpenVrBindingResult result = OpenVrBindingSettingsCleaner.ActivateLocalBinding();
+        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(result));
         return result.Succeeded ? 0 : 1;
     }
 }
